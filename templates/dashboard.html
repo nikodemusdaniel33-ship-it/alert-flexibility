@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>alert-flexibility · CMC/CG completeness</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, sans-serif; margin: 2rem; color: #1a1a1a; background: #fafafa; }
+    h1 { font-size: 1.25rem; }
+    table { border-collapse: collapse; width: 100%; background: #fff; }
+    th, td { border: 1px solid #ddd; padding: 0.5rem 0.75rem; text-align: left; font-size: 0.9rem; vertical-align: top; }
+    th { background: #f0f0f0; }
+    tr.gap { background: #fff4f4; }
+    tr.muted { opacity: 0.5; }
+    .tag { display: inline-block; background: #ffe0e0; color: #a30000; border-radius: 4px; padding: 0 6px; margin: 1px; font-size: 0.75rem; }
+    .ok { color: #2a7d2a; }
+    form.inline { display: inline; }
+    input[type=text] { width: 100px; }
+    .addform input { margin-right: 0.5rem; padding: 0.3rem; }
+  </style>
+</head>
+<body>
+  <h1>CMC vs CoinGecko data completeness</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>CMC</th>
+        <th>CG</th>
+        <th>Missing Details</th>
+        <th>Follow up / PIC</th>
+        <th>Mark as checked</th>
+        <th>Alert</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in projects %}
+      {% set latest = p.latest_check %}
+      <tr class="{{ 'gap' if latest and latest.missing_in_cmc else '' }} {{ 'muted' if p.is_muted else '' }}">
+        <td><strong>{{ p.symbol }}</strong><br><small>{{ p.name }}</small><br><small>{{ p.tier }}</small></td>
+        <td>{{ 'error: ' + latest.cmc_error if latest and latest.cmc_error else (latest.cmc_fields if latest else '—') }}</td>
+        <td>{{ 'error: ' + latest.cg_error if latest and latest.cg_error else (latest.cg_fields if latest else '—') }}</td>
+        <td>
+          {% if latest and latest.missing_in_cmc %}
+            {% for field in latest.missing_in_cmc %}<span class="tag">{{ field }}</span>{% endfor %}
+          {% else %}
+            <span class="ok">none</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if p.pic %}<strong>{{ p.pic }}</strong><br>{% endif %}
+          {% if p.follow_up_notes %}<small>{{ p.follow_up_notes }}</small><br>{% endif %}
+          {% if p.checked_at %}<small>checked {{ p.checked_at.strftime('%Y-%m-%d %H:%M') }} UTC</small>{% endif %}
+        </td>
+        <td>
+          <form class="inline" method="post" action="/projects/{{ p.id }}/check">
+            <input type="text" name="pic" placeholder="PIC name" required>
+            <input type="text" name="follow_up_notes" placeholder="notes">
+            <button type="submit">Save</button>
+          </form>
+        </td>
+        <td>
+          <form class="inline" method="post" action="/projects/{{ p.id }}/mute">
+            <button type="submit">{{ 'Unmute' if p.is_muted else 'Mute' }}</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <h2>Add tracked project</h2>
+  <form class="addform" method="post" action="/projects">
+    <input type="text" name="symbol" placeholder="Symbol (e.g. BTC)" required>
+    <input type="text" name="name" placeholder="Name" required>
+    <input type="text" name="cmc_id" placeholder="CMC id" required>
+    <input type="text" name="coingecko_id" placeholder="CoinGecko id" required>
+    <input type="text" name="tier" placeholder="Tier (default T1)">
+    <button type="submit">Add</button>
+  </form>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Tracked projects seed list.
+#
+# This is a placeholder — replace with your actual T1-exchange project list
+# and criteria. Find `cmc_id` on a project's CoinMarketCap URL/API, and
+# `coingecko_id` from its CoinGecko URL slug (e.g. coingecko.com/en/coins/<id>).
+projects:
+  - symbol: BTC
+    name: Bitcoin
+    cmc_id: "1"
+    coingecko_id: bitcoin
+    tier: T1
+  - symbol: ETH
+    name: Ethereum
+    cmc_id: "1027"
+    coingecko_id: ethereum
+    tier: T1

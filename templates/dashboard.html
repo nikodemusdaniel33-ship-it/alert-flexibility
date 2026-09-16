@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>alert-flexibility · CMC/CG completeness</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, sans-serif; margin: 2rem; color: #1a1a1a; background: #fafafa; }
+    h1 { font-size: 1.25rem; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    table { border-collapse: collapse; width: 100%; background: #fff; }
+    th, td { border: 1px solid #ddd; padding: 0.5rem 0.75rem; text-align: left; font-size: 0.9rem; vertical-align: top; }
+    th { background: #f0f0f0; }
+    tr.has-gap { background: #fff4f4; }
+    .gap-block { border: 1px solid #f0c0c0; border-radius: 6px; padding: 0.4rem 0.6rem; margin-bottom: 0.4rem; background: #fff; }
+    .gap-block.muted { border-color: #ddd; opacity: 0.7; }
+    .gap-field { font-weight: 600; font-size: 0.8rem; }
+    .gap-meta { font-size: 0.72rem; color: #666; }
+    .ok { color: #2a7d2a; }
+    form.inline { display: inline-block; margin: 2px 4px 2px 0; }
+    input[type=text], input[type=number], input[type=datetime-local] { font-size: 0.75rem; padding: 2px 4px; width: 90px; }
+    button { font-size: 0.72rem; padding: 2px 6px; cursor: pointer; }
+    .error { color: #a30000; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>CMC vs CoinGecko data completeness</h1>
+    <div>Signed in as <strong>{{ user.display_name }}</strong> — <a href="/logout">sign out</a></div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Last checked</th>
+        <th>Open gaps</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in projects %}
+      {% set latest = p.latest_check %}
+      {% set gaps = p.open_gaps %}
+      <tr class="{{ 'has-gap' if gaps else '' }}">
+        <td><strong>{{ p.symbol }}</strong><br><small>{{ p.name }}</small><br><small>{{ p.tier }} · {{ p.criteria_source }}</small></td>
+        <td>
+          {% if latest %}
+            <small>{{ latest.checked_at.strftime('%Y-%m-%d %H:%M') }} UTC</small>
+            {% if latest.cmc_error %}<div class="error">CMC: {{ latest.cmc_error }}</div>{% endif %}
+            {% if latest.cg_error %}<div class="error">CG: {{ latest.cg_error }}</div>{% endif %}
+          {% else %}
+            <small>never</small>
+          {% endif %}
+        </td>
+        <td>
+          {% if not gaps %}
+            <span class="ok">none</span>
+          {% endif %}
+          {% for gap in gaps %}
+          <div class="gap-block {{ 'muted' if gap.status.value == 'MUTED' else '' }}">
+            <div class="gap-field">{{ gap.field_name }}
+              <span class="gap-meta">
+                {% if gap.status.value == 'MUTED' %}
+                  muted until {{ gap.muted_until.strftime('%Y-%m-%d %H:%M') }} UTC
+                {% else %}
+                  open · {{ gap.alert_count }} alert(s) sent
+                {% endif %}
+              </span>
+            </div>
+
+            <form class="inline" method="post" action="/gaps/{{ gap.id }}/resolve">
+              <input type="text" name="note" placeholder="note (optional)">
+              <button type="submit">Mark done</button>
+            </form>
+
+            {% if gap.status.value != 'MUTED' %}
+            <form class="inline" method="post" action="/gaps/{{ gap.id }}/mute">
+              <select name="hours">
+                <option value="1">1h</option>
+                <option value="6">6h</option>
+                <option value="24" selected>24h</option>
+                <option value="72">72h</option>
+              </select>
+              <button type="submit">Mute</button>
+            </form>
+            <form class="inline" method="post" action="/gaps/{{ gap.id }}/mute">
+              <input type="datetime-local" name="until" required>
+              <button type="submit">Mute until</button>
+            </form>
+            {% else %}
+            <form class="inline" method="post" action="/gaps/{{ gap.id }}/reactivate">
+              <button type="submit">Reactivate now</button>
+            </form>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <p><small>Tracked projects are driven by <code>config/projects.yaml</code> (synced by the worker on every run). Edit that file and push to add/remove tracked projects.</small></p>
+</body>
+</html>

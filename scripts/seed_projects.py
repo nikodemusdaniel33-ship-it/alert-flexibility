@@ -6,11 +6,11 @@ every check.
 """
 
 from app.criteria import sync
-from app.db import Base, SessionLocal, engine
+from app.db import SessionLocal, ensure_schema
 
 
 def run() -> None:
-    Base.metadata.create_all(bind=engine)
+    ensure_schema()
     db = SessionLocal()
     try:
         sync.run(db)

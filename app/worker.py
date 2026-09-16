@@ -15,7 +15,7 @@ from app.clients import cmc, coingecko
 from app.compare import TRACKED_FIELDS
 from app.config import settings
 from app.criteria import sync as criteria_sync
-from app.db import Base, SessionLocal, engine
+from app.db import SessionLocal, ensure_schema
 from app.models import CompletenessCheck, Gap, GapStatus, Project
 from app.telegram import send_alert
 
@@ -139,7 +139,7 @@ def check_project(db: Session, project: Project) -> None:
 
 
 def run() -> None:
-    Base.metadata.create_all(bind=engine)
+    ensure_schema()
     db = SessionLocal()
     try:
         criteria_sync.run(db)

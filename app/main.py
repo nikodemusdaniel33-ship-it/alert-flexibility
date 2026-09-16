@@ -14,11 +14,11 @@ from app.auth import (
     verify_telegram_auth,
 )
 from app.config import settings
-from app.db import Base, engine, get_db
+from app.db import ensure_schema, get_db
 from app.models import Gap, GapStatus, Project, User
 from app.telegram import send_alert
 
-Base.metadata.create_all(bind=engine)
+ensure_schema()
 
 app = FastAPI(title="alert-flexibility")
 templates = Jinja2Templates(directory="templates")

@@ -75,13 +75,22 @@ in `app/criteria/market_universe.py` for the upgrade path.
 pulls socials from both sides) is layered — manual override, then contract
 address, then unique ticker symbol, then (for symbols CoinGecko lists more
 than once, e.g. "BTC" also matching a dozen wrapped/bridged/impersonator
-tokens) picking the candidate whose market cap dominates the runner-up's.
-In testing against the live top 600 + Binance Spot set, this resolved
-~98.5% of candidates correctly (verified major coins like BTC/ETH/BNB/SOL
-land on the real `bitcoin`/`ethereum`/`binancecoin`/`solana`, not a clone).
-Coins that still can't be resolved are logged as a worker warning, not
-silently tracked with a guessed id — add them to
-`config/cmc_cg_overrides.yaml` once you know the right CoinGecko id.
+tokens) the candidate whose market cap dominates the runner-up's, then —
+for the handful left over even after that — comparing CMC's own
+website/Twitter against each remaining candidate's. Stress-tested against
+the live top 600 + Binance Spot set (~807 coins, run twice back to back):
+98.1% resolved, 0 disagreements between the two runs (fully deterministic),
+survived sustained CoinGecko rate-limiting without crashing (retry-with-
+backoff), and every major coin (BTC/ETH/BNB/SOL/XRP/DOGE/...) landed on the
+real `bitcoin`/`ethereum`/`binancecoin`/`solana`/etc., never a clone. Coins
+that still can't be resolved are logged as a worker warning, not silently
+tracked with a guessed id — add them to `config/cmc_cg_overrides.yaml` once
+you know the right CoinGecko id.
+
+CoinGecko's free tier rate-limits fairly aggressively for the social-match
+tier specifically (one API call per remaining candidate, no bulk endpoint
+for it) — setting `COINGECKO_API_KEY` (a free demo key is enough) raises
+those limits and avoids the multi-retry waits seen in testing without one.
 
 ## Local setup
 

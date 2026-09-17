@@ -30,11 +30,16 @@ socials from both sides) is best-effort, in priority order:
      live: real bitcoin ~17,000x its largest same-symbol clone), so a
      confidently-dominant candidate is picked; a close call is left unmatched
      rather than guessed. See AMBIGUOUS_MARKET_CAP_CONFIDENCE_RATIO.
-Coins that don't resolve even after that are logged, not synced — add them
-to the overrides file once you know the right CoinGecko id.
+  5. Social-link disambiguation for symbols step 4 still couldn't resolve
+     (market cap too close to call, e.g. two exchange-issued stablecoins
+     sharing a ticker): CMC's own website/Twitter is compared against each
+     remaining CoinGecko candidate's, and picked only if exactly one matches.
+Coins that don't resolve even after all five tiers are logged, not synced —
+add them to the overrides file once you know the right CoinGecko id.
 """
 
 import logging
+import re
 import time
 
 import requests
@@ -59,6 +64,7 @@ CMC_INFO_URL = "https://pro-api.coinmarketcap.com/v2/cryptocurrency/info"
 CMC_PUBLIC_MARKET_PAIRS_URL = "https://api.coinmarketcap.com/data-api/v3/exchange/market-pairs/latest"
 COINGECKO_COINS_LIST_URL = "https://api.coingecko.com/api/v3/coins/list"
 COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
+COINGECKO_COIN_URL = "https://api.coingecko.com/api/v3/coins"
 
 # A symbol match with >1 CoinGecko candidate (e.g. "BTC" also matches a
 # dozen wrapped/bridged/impersonator tokens) is resolved by market cap: the
@@ -111,10 +117,27 @@ CHAIN_SLUG_CMC_TO_CG = {
 }
 
 
+def _get_with_retry(url: str, *, max_retries: int = 5, **kwargs) -> requests.Response:
+    """A full sync makes many calls to CMC and CoinGecko back to back (top-N
+    listing, exchange pairs, info lookups, the full coin index, market caps,
+    per-candidate social links...); on both APIs' free/lower tiers, 429s are
+    routine, not exceptional. Retries with backoff (honoring Retry-After when
+    the API sends one) before giving up."""
+    for attempt in range(max_retries + 1):
+        resp = requests.get(url, **kwargs)
+        if resp.status_code != 429 or attempt == max_retries:
+            resp.raise_for_status()
+            return resp
+        wait = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
+        log.warning("market_universe: rate-limited (429) on %s, retrying in %.0fs", url, wait)
+        time.sleep(wait)
+    raise RuntimeError("unreachable")  # loop always returns or raises above
+
+
 def _fetch_cmc_universe(limit: int) -> list[dict]:
     """Top-`limit` CMC coins by market cap, official Pro API (needs a plan
     that includes cryptocurrency/listings/latest -- available on Basic)."""
-    resp = requests.get(
+    resp = _get_with_retry(
         CMC_LISTINGS_URL,
         params={
             "start": 1,
@@ -127,30 +150,33 @@ def _fetch_cmc_universe(limit: int) -> list[dict]:
         headers={"X-CMC_PRO_API_KEY": settings.cmc_api_key, "Accept": "application/json"},
         timeout=30,
     )
-    resp.raise_for_status()
     return resp.json().get("data", [])
 
 
 def _fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
-    """Batch-fetch name/symbol/platform for specific CMC ids (the same
-    v2/cryptocurrency/info endpoint app/clients/cmc.py uses for socials),
-    for Binance-listed coins that fell outside the top-N pull above."""
+    """Batch-fetch name/symbol/platform/urls for specific CMC ids (the same
+    v2/cryptocurrency/info endpoint app/clients/cmc.py uses for socials).
+    Used both for Binance-listed coins that fell outside the top-N pull,
+    and to get social links for coins that reach the social-match
+    disambiguation tier (the top-N listing endpoint doesn't include urls)."""
     out: dict[int, dict] = {}
     for i in range(0, len(ids), 100):
         chunk = ids[i : i + 100]
-        resp = requests.get(
+        resp = _get_with_retry(
             CMC_INFO_URL,
             params={"id": ",".join(str(x) for x in chunk)},
             headers={"X-CMC_PRO_API_KEY": settings.cmc_api_key, "Accept": "application/json"},
             timeout=30,
         )
-        resp.raise_for_status()
         for cid, entry in resp.json().get("data", {}).items():
+            urls = entry.get("urls") or {}
             out[int(cid)] = {
                 "id": entry["id"],
                 "name": entry["name"],
                 "symbol": entry["symbol"],
                 "platform": entry.get("platform"),
+                "website": (urls.get("website") or [None])[0],
+                "twitter": (urls.get("twitter") or [None])[0],
             }
     return out
 
@@ -163,13 +189,12 @@ def _fetch_cmc_binance_spot_ids() -> dict[int, dict]:
     start = 1
     limit = 1000
     while True:
-        resp = requests.get(
+        resp = _get_with_retry(
             CMC_PUBLIC_MARKET_PAIRS_URL,
             params={"slug": BINANCE_SLUG, "category": "spot", "start": start, "limit": limit, "convert": "USD"},
             headers={"Accept": "application/json"},
             timeout=30,
         )
-        resp.raise_for_status()
         data = resp.json()["data"]
         batch = data["marketPairs"]
         for pair in batch:
@@ -179,22 +204,6 @@ def _fetch_cmc_binance_spot_ids() -> dict[int, dict]:
             break
         start += limit
     return ids
-
-
-def _get_with_retry(url: str, *, max_retries: int = 5, **kwargs) -> requests.Response:
-    """CoinGecko's free tier rate-limits aggressively; a full sync makes
-    several heavy calls to it back to back, so 429s are routine, not
-    exceptional. Retries with backoff (honoring Retry-After when CoinGecko
-    sends one) before giving up."""
-    for attempt in range(max_retries + 1):
-        resp = requests.get(url, **kwargs)
-        if resp.status_code != 429 or attempt == max_retries:
-            resp.raise_for_status()
-            return resp
-        wait = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
-        log.warning("market_universe: CoinGecko rate-limited (429), retrying in %.0fs", wait)
-        time.sleep(wait)
-    raise RuntimeError("unreachable")  # loop always returns or raises above
 
 
 def _fetch_coingecko_index() -> tuple[dict[tuple[str, str], str], dict[str, list[str]]]:
@@ -267,6 +276,100 @@ def _resolve_ambiguous_by_market_cap(
         if runner_up_cap > 0 and top_cap < runner_up_cap * AMBIGUOUS_MARKET_CAP_CONFIDENCE_RATIO:
             continue
         resolved[symbol] = ranked[0]
+    return resolved
+
+
+def _normalize_domain(url: str | None) -> str | None:
+    if not url:
+        return None
+    url = url.strip().lower()
+    url = re.sub(r"^https?://", "", url)
+    if url.startswith("www."):
+        url = url[4:]
+    url = url.split("/")[0].split("?")[0]
+    return url or None
+
+
+def _normalize_twitter_handle(value: str | None) -> str | None:
+    if not value:
+        return None
+    v = value.strip().lower()
+    v = re.sub(r"^https?://(www\.)?(twitter|x)\.com/", "", v)
+    v = v.strip("/").split("/")[0].split("?")[0]
+    return v or None
+
+
+def _fetch_cg_social_links(ids: list[str]) -> dict[str, dict]:
+    """Per-candidate website/twitter from CoinGecko. Unlike market cap,
+    there's no bulk endpoint for this -- one call per id -- so this is only
+    used on the small set of symbols still ambiguous after the cheaper
+    contract/unique-symbol/market-cap tiers."""
+    headers = {"Accept": "application/json"}
+    if settings.coingecko_api_key:
+        headers["x-cg-demo-api-key"] = settings.coingecko_api_key
+
+    out: dict[str, dict] = {}
+    for cg_id in ids:
+        resp = _get_with_retry(
+            f"{COINGECKO_COIN_URL}/{cg_id}",
+            params={
+                "localization": "false",
+                "tickers": "false",
+                "market_data": "false",
+                "community_data": "false",
+                "developer_data": "false",
+            },
+            headers=headers,
+            timeout=20,
+        )
+        links = resp.json().get("links", {})
+        out[cg_id] = {
+            "website_domain": _normalize_domain((links.get("homepage") or [None])[0]),
+            "twitter": _normalize_twitter_handle(links.get("twitter_screen_name")),
+        }
+    return out
+
+
+def _resolve_ambiguous_by_social_match(
+    still_ambiguous: dict[int, dict], symbol_map: dict[str, list[str]]
+) -> dict[int, str]:
+    """{cmc_id: cg_id} for coins whose symbol survived the market-cap tier
+    still ambiguous, resolved by comparing CMC's own website/twitter against
+    each CoinGecko candidate's. Picked only when exactly one candidate's
+    socials match (by website domain or Twitter handle) -- if socials match
+    more than one candidate (e.g. a wrapped token that copies its underlying
+    project's links) or none, it's left unmatched rather than guessed."""
+    if not still_ambiguous:
+        return {}
+
+    cmc_info = _fetch_cmc_info(list(still_ambiguous.keys()))
+
+    all_candidate_ids = {
+        cg_id for coin in still_ambiguous.values() for cg_id in symbol_map.get(coin["symbol"].upper(), [])
+    }
+    cg_socials = _fetch_cg_social_links(list(all_candidate_ids))
+
+    resolved: dict[int, str] = {}
+    for cid, coin in still_ambiguous.items():
+        cmc = cmc_info.get(cid)
+        if not cmc:
+            continue
+        cmc_domain = _normalize_domain(cmc.get("website"))
+        cmc_twitter = _normalize_twitter_handle(cmc.get("twitter"))
+        if not cmc_domain and not cmc_twitter:
+            continue
+
+        matches = [
+            cg_id
+            for cg_id in symbol_map.get(coin["symbol"].upper(), [])
+            if cg_id in cg_socials
+            and (
+                (cmc_domain and cg_socials[cg_id]["website_domain"] == cmc_domain)
+                or (cmc_twitter and cg_socials[cg_id]["twitter"] == cmc_twitter)
+            )
+        ]
+        if len(matches) == 1:
+            resolved[cid] = matches[0]
     return resolved
 
 
@@ -359,6 +462,17 @@ class MarketUniverseProvider:
                 symbol = coin["symbol"].upper()
                 if cid not in matches and symbol in resolved:
                     matches[cid] = (resolved[symbol], "symbol_by_market_cap")
+
+            still_ambiguous_symbols = ambiguous_symbols - set(resolved.keys())
+            still_ambiguous_coins = {
+                cid: coin
+                for cid, (coin, _, _) in selected.items()
+                if cid not in matches and coin["symbol"].upper() in still_ambiguous_symbols
+            }
+            if still_ambiguous_coins:
+                social_resolved = _resolve_ambiguous_by_social_match(still_ambiguous_coins, symbol_map)
+                for cid, cg_id in social_resolved.items():
+                    matches[cid] = (cg_id, "symbol_by_social_match")
 
         candidates: list[Candidate] = []
         unmatched: list[tuple[str, str]] = []

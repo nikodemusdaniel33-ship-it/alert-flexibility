@@ -1,5 +1,7 @@
+from app.config import settings
 from app.criteria.base import CriteriaProvider
 from app.criteria.manual import ManualListProvider
+from app.criteria.market_universe import MarketUniverseProvider
 
 
 def enabled_providers() -> list[CriteriaProvider]:
@@ -10,4 +12,7 @@ def enabled_providers() -> list[CriteriaProvider]:
     downstream (gaps, alerts, dashboard) is agnostic to where a project
     came from.
     """
-    return [ManualListProvider()]
+    providers: list[CriteriaProvider] = [ManualListProvider()]
+    if settings.market_universe_enabled:
+        providers.append(MarketUniverseProvider())
+    return providers

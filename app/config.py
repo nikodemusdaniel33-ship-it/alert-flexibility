@@ -17,5 +17,13 @@ class Settings(BaseSettings):
 
     projects_config_path: str = "config/projects.yaml"
 
+    # MarketUniverseProvider (app/criteria/market_universe.py): auto-tracks
+    # the top N CMC coins by market cap, plus any coin listed on CMC that's
+    # also live on Binance Spot (even outside the top N). Off by default —
+    # the manual list keeps working either way.
+    market_universe_enabled: bool = False
+    market_universe_top_n: int = 600
+    market_universe_overrides_path: str = "config/cmc_cg_overrides.yaml"
+
 
 settings = Settings()

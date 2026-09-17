@@ -9,11 +9,12 @@ resolving them, or muting them for a duration or until a specific date.
 ## How tracking works
 
 1. **Criteria providers** (`app/criteria/`) decide which projects are
-   tracked. Today there's one provider, `ManualListProvider`, backed by
-   `config/projects.yaml`. Tracking criteria isn't limited to CMC/CoinGecko
-   data — a future provider can pull from any external source (exchange
-   listing APIs, tag/category feeds, etc); add it to
-   `app/criteria/registry.py` and nothing else needs to change.
+   tracked. `ManualListProvider`, backed by `config/projects.yaml`, always
+   runs. `MarketUniverseProvider` (see below) is a second, optional source.
+   Tracking criteria isn't limited to CMC/CoinGecko data — a future provider
+   can pull from any external source (exchange listing APIs, tag/category
+   feeds, etc); add it to `app/criteria/registry.py` and nothing else needs
+   to change. All enabled providers' results are unioned by sync.
 2. Every worker run starts with a **criteria sync**: providers' candidates
    are upserted into `projects`; anything no provider matches anymore is
    deactivated (not deleted, so gap history survives).
@@ -46,6 +47,42 @@ resolving them, or muting them for a duration or until a specific date.
 - `config/projects.yaml` — the manual criteria provider's project list.
   **Replace the placeholder entries with your real tracked-project list.**
 
+## MarketUniverseProvider (auto-tracked coins)
+
+Set `MARKET_UNIVERSE_ENABLED=true` to also track, automatically: the top
+`MARKET_UNIVERSE_TOP_N` (default 600) CMC coins by market cap, unioned with
+every CMC-listed coin currently trading on Binance Spot (even outside that
+top N). It runs alongside `ManualListProvider`, not instead of it, and
+re-evaluates on every worker run — newly-ranked or newly-listed coins are
+picked up, delisted ones drop out automatically (see "How tracking works"
+above).
+
+All coins this provider finds currently land in one discovery group,
+`group_1_top_n_or_binance_spot` (`Project.tier` / `criteria_metadata.group`)
+— a placeholder for when more groups (a different cutoff, another exchange,
+a tag-based cut) get added, each as its own group value the dashboard can
+eventually filter/tab by.
+
+**Binance Spot listings** come from CMC's own exchange data (a coin's CMC
+id on Binance's spot market pairs), not Binance's API directly — this
+avoids `api.binance.com` 451ing from several cloud regions (geo-block) and
+avoids ambiguous ticker-symbol matching. It currently calls CMC's public
+site API for this (the documented `exchange/market-pairs/latest` endpoint
+needs a Hobbyist-tier+ key); see the comment on `CMC_PUBLIC_MARKET_PAIRS_URL`
+in `app/criteria/market_universe.py` for the upgrade path.
+
+**Matching a CMC coin to its CoinGecko id** (needed since gap-checking
+pulls socials from both sides) is layered — manual override, then contract
+address, then unique ticker symbol, then (for symbols CoinGecko lists more
+than once, e.g. "BTC" also matching a dozen wrapped/bridged/impersonator
+tokens) picking the candidate whose market cap dominates the runner-up's.
+In testing against the live top 600 + Binance Spot set, this resolved
+~98.5% of candidates correctly (verified major coins like BTC/ETH/BNB/SOL
+land on the real `bitcoin`/`ethereum`/`binancecoin`/`solana`, not a clone).
+Coins that still can't be resolved are logged as a worker warning, not
+silently tracked with a guessed id — add them to
+`config/cmc_cg_overrides.yaml` once you know the right CoinGecko id.
+
 ## Local setup
 
 ```
@@ -68,6 +105,8 @@ python -m app.worker   # run a check manually
 | `TELEGRAM_CHAT_ID` | Chat/channel id the bot should post alerts to. |
 | `SESSION_SECRET` | Random long string to sign session cookies (`python -c "import secrets; print(secrets.token_urlsafe(32))"`). |
 | `GAP_REMINDER_INTERVAL_HOURS` | How often to re-alert on a still-open gap. Default 24. |
+| `MARKET_UNIVERSE_ENABLED` | Auto-track top-N CMC coins + Binance-Spot-listed coins (see below). Default `false`. |
+| `MARKET_UNIVERSE_TOP_N` | Top-N-by-market-cap cutoff for the above. Default 600. |
 
 ### Telegram Login Widget setup
 

@@ -2,19 +2,22 @@
 needing the database or FastAPI app running:
 
   1. Detect the top-N CMC coins by market cap + every CMC-listed coin also
-     on Binance Spot -- solely via CMC's API (app/criteria/market_universe.py).
-  2. Map each of those to its CoinGecko id (5-tier matching, same module).
+     on Binance Spot -- solely via CMC's public API, no key needed
+     (app/criteria/market_universe.py).
+  2. Map each of those to its CoinGecko id (5-tier matching, same module) --
+     also no key needed.
   3. Compare CMC vs CoinGecko socials for a sample of the mapped coins,
      using the exact same clients (app/clients/cmc.py, app/clients/coingecko.py)
-     and gap logic (app/compare.py) the real worker uses.
+     and gap logic (app/compare.py) the real worker uses. This step needs
+     CMC_API_KEY (app/clients/cmc.py uses the Pro API); skip it with
+     --compare-sample 0 to run steps 1+2 with no API key at all.
 
 Usage:
-    python -m scripts.preview_market_universe
+    python -m scripts.preview_market_universe --compare-sample 0   # steps 1+2 only, no API key needed
     python -m scripts.preview_market_universe --top-n 600 --compare-sample 20
     python -m scripts.preview_market_universe --compare-all --csv out.csv
 
-Requires CMC_API_KEY in the environment/.env (Basic plan is enough --
-nothing here needs a paid tier). COINGECKO_API_KEY is optional.
+COINGECKO_API_KEY is optional throughout (raises CoinGecko's rate limits).
 """
 
 import argparse
@@ -41,8 +44,13 @@ def main() -> None:
     parser.add_argument("--csv", type=str, default=None, help="Write the full mapped coin list to this CSV path.")
     args = parser.parse_args()
 
-    if not settings.cmc_api_key:
-        print("CMC_API_KEY is not set -- set it in .env or the environment first.", file=sys.stderr)
+    wants_compare = args.compare_all or args.compare_sample > 0
+    if wants_compare and not settings.cmc_api_key:
+        print(
+            "CMC_API_KEY is not set -- needed for step 3 (the detail compare). "
+            "Set it in .env, or pass --compare-sample 0 to run steps 1+2 only.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     if args.top_n:

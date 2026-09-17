@@ -55,7 +55,10 @@ every CMC-listed coin currently trading on Binance Spot (even outside that
 top N). It runs alongside `ManualListProvider`, not instead of it, and
 re-evaluates on every worker run — newly-ranked or newly-listed coins are
 picked up, delisted ones drop out automatically (see "How tracking works"
-above).
+above). Discovering and mapping this provider's coins needs **no API key
+at all** — every CMC and CoinGecko call it makes is public/unauthenticated
+(`CMC_API_KEY` is still needed elsewhere, for the per-project socials
+comparison once a coin is tracked).
 
 All coins this provider finds currently land in one discovery group,
 `group_1_top_n_or_binance_spot` (`Project.tier` / `criteria_metadata.group`)
@@ -66,21 +69,29 @@ eventually filter/tab by.
 **Binance Spot listings** come from CMC's own exchange data (a coin's CMC
 id on Binance's spot market pairs), not Binance's API directly — this
 avoids `api.binance.com` 451ing from several cloud regions (geo-block) and
-avoids ambiguous ticker-symbol matching. It currently calls CMC's public
-site API for this (the documented `exchange/market-pairs/latest` endpoint
-needs a Hobbyist-tier+ key); see the comment on `CMC_PUBLIC_MARKET_PAIRS_URL`
-in `app/criteria/market_universe.py` for the upgrade path.
+avoids ambiguous ticker-symbol matching. The CMC top-N listing and per-coin
+detail lookups (platform/contract, website, Twitter) also go through CMC's
+public site API rather than the documented Pro API endpoints — the
+Pro-API-equivalent of the exchange-listing lookup needs a Hobbyist-tier+
+key, and using the public API everywhere here keeps one consistent, key-free
+code path instead of splitting it across two auth models. Being
+undocumented, CMC could change or block this without notice; see the
+module docstring in `app/criteria/market_universe.py` for where to swap
+back to the documented, key-based Pro API endpoints if that ever happens.
 
 **Matching a CMC coin to its CoinGecko id** (needed since gap-checking
 pulls socials from both sides) is layered — manual override, then contract
-address, then unique ticker symbol, then (for symbols CoinGecko lists more
-than once, e.g. "BTC" also matching a dozen wrapped/bridged/impersonator
-tokens) the candidate whose market cap dominates the runner-up's, then —
-for the handful left over even after that — comparing CMC's own
-website/Twitter against each remaining candidate's. Stress-tested against
-the live top 600 + Binance Spot set (~807 coins, run twice back to back):
-98.1% resolved, 0 disagreements between the two runs (fully deterministic),
-survived sustained CoinGecko rate-limiting without crashing (retry-with-
+address (tried against every chain CMC reports for the coin, not just one —
+CMC's own listing order isn't priority-ordered; confirmed live against
+USDC's 97 chains, where Ethereum was listed 84th), then unique ticker
+symbol, then (for symbols CoinGecko lists more than once, e.g. "BTC" also
+matching a dozen wrapped/bridged/impersonator tokens) the candidate whose
+market cap dominates the runner-up's, then — for the handful left over even
+after that — comparing CMC's own website/Twitter against each remaining
+candidate's. Stress-tested against the live top 600 + Binance Spot set
+(~807 coins, run twice back to back): 98%+ resolved, 0 disagreements
+between the two runs (fully deterministic), survived sustained CoinGecko
+rate-limiting and transient connection errors without crashing (retry-with-
 backoff), and every major coin (BTC/ETH/BNB/SOL/XRP/DOGE/...) landed on the
 real `bitcoin`/`ethereum`/`binancecoin`/`solana`/etc., never a clone. Coins
 that still can't be resolved are logged as a worker warning, not silently
@@ -91,6 +102,14 @@ CoinGecko's free tier rate-limits fairly aggressively for the social-match
 tier specifically (one API call per remaining candidate, no bulk endpoint
 for it) — setting `COINGECKO_API_KEY` (a free demo key is enough) raises
 those limits and avoids the multi-retry waits seen in testing without one.
+
+CMC's public per-coin detail lookup (used for Binance-listed coins outside
+the top N, and for social-match candidates) has no bulk form either — one
+request per coin, paced with a small delay — so a sync with many such coins
+takes noticeably longer than the near-instant top-N listing call. This is
+the tradeoff for not needing a CMC API key; if that ever matters more than
+staying key-free, swap it for the Pro API's batched `v2/cryptocurrency/info`
+(see the module docstring).
 
 ## Local setup
 

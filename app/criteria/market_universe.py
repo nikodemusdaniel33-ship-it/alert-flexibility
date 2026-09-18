@@ -289,10 +289,22 @@ def _fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     `platforms` for contract matching) and for coins that reach the
     social-match tier (need `website`/`twitter`; the top-N listing endpoint
     has neither of those). Unlike the Pro API's v2/cryptocurrency/info, this
-    endpoint has no bulk form -- one request per id, paced accordingly."""
+    endpoint has no bulk form -- one request per id, paced accordingly. A
+    single id that still fails after _get_with_retry's own retries (seen
+    live at top-2000 scale: enough back-to-back per-id calls can outlast
+    even that budget under sustained rate-limiting) is skipped, not raised
+    -- losing one coin's detail shouldn't cost every other id already
+    fetched in this same batch."""
     out: dict[int, dict] = {}
     for i, cid in enumerate(ids):
-        entry = _fetch_cmc_detail_raw(cid)
+        try:
+            entry = _fetch_cmc_detail_raw(cid)
+        except requests.exceptions.RequestException as exc:
+            log.warning("market_universe: giving up on CMC detail for id=%s after retries (%s)", cid, exc)
+            continue
+        finally:
+            if i < len(ids) - 1:
+                time.sleep(CMC_DETAIL_REQUEST_DELAY_SECONDS)
         urls = entry.get("urls") or {}
         out[cid] = {
             "id": entry["id"],
@@ -302,8 +314,6 @@ def _fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
             "website": (urls.get("website") or [None])[0],
             "twitter": (urls.get("twitter") or [None])[0],
         }
-        if i < len(ids) - 1:
-            time.sleep(CMC_DETAIL_REQUEST_DELAY_SECONDS)
     return out
 
 
@@ -453,10 +463,20 @@ def _fetch_cg_social_links(ids: list[str]) -> dict[str, dict]:
     """Per-candidate website/twitter from CoinGecko. Unlike market cap,
     there's no bulk endpoint for this -- one call per id -- so this is only
     used on the small set of symbols still ambiguous after the cheaper
-    contract/unique-symbol/market-cap tiers."""
+    contract/unique-symbol/market-cap tiers. A candidate id that still fails
+    after _get_with_retry's own retries (seen live: sustained 429s on
+    CoinGecko's free tier, no API key, can outlast even that budget once
+    enough per-id calls stack up in one batch) is skipped, not raised -- the
+    caller just won't find it in the returned dict, so that one candidate
+    fails this tier's match (falls through to unmatched) instead of the
+    whole batch losing every other id's already-fetched result."""
     out: dict[str, dict] = {}
     for cg_id in ids:
-        links = _fetch_cg_detail_raw(cg_id).get("links", {})
+        try:
+            links = _fetch_cg_detail_raw(cg_id).get("links", {})
+        except requests.exceptions.RequestException as exc:
+            log.warning("market_universe: giving up on CoinGecko social links for %s after retries (%s)", cg_id, exc)
+            continue
         out[cg_id] = {
             "website_domain": _normalize_domain((links.get("homepage") or [None])[0]),
             "twitter": _normalize_twitter_handle(links.get("twitter_screen_name")),

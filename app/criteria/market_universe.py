@@ -267,6 +267,22 @@ def _normalize_detail_platforms(platforms: list[dict] | None) -> list[dict]:
     return out
 
 
+def _fetch_cmc_detail_raw(cmc_id: int) -> dict:
+    """The full, unfiltered `data` object from CMC's public per-coin detail
+    API -- statistics, every platform/contract, urls, tags, holders, audits,
+    supply provenance, etc. `_fetch_cmc_info` below narrows this to just
+    what the matching pipeline needs; scripts wanting the rest (e.g.
+    scripts/full_detail_pull.py) should call this directly instead of
+    duplicating the request."""
+    resp = _get_with_retry(
+        CMC_DETAIL_URL,
+        params={"id": cmc_id},
+        headers={"Accept": "application/json"},
+        timeout=20,
+    )
+    return resp.json()["data"]
+
+
 def _fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     """Per-id name/symbol/platforms/urls from CMC's public detail API. Used
     both for Binance-listed coins that fell outside the top-N pull (need
@@ -276,13 +292,7 @@ def _fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     endpoint has no bulk form -- one request per id, paced accordingly."""
     out: dict[int, dict] = {}
     for i, cid in enumerate(ids):
-        resp = _get_with_retry(
-            CMC_DETAIL_URL,
-            params={"id": cid},
-            headers={"Accept": "application/json"},
-            timeout=20,
-        )
-        entry = resp.json()["data"]
+        entry = _fetch_cmc_detail_raw(cid)
         urls = entry.get("urls") or {}
         out[cid] = {
             "id": entry["id"],
@@ -322,18 +332,21 @@ def _fetch_cmc_binance_spot_ids() -> dict[int, dict]:
     return ids
 
 
+def _coingecko_headers() -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    if settings.coingecko_api_key:
+        headers["x-cg-demo-api-key"] = settings.coingecko_api_key
+    return headers
+
+
 def _fetch_coingecko_index() -> tuple[dict[tuple[str, str], str], dict[str, list[str]]]:
     """Returns (contract_map, symbol_map) built from CoinGecko's full coin
     list: {(chain, contract_lower): cg_id} and {symbol_upper: [cg_id, ...]}.
     """
-    headers = {"Accept": "application/json"}
-    if settings.coingecko_api_key:
-        headers["x-cg-demo-api-key"] = settings.coingecko_api_key
-
     resp = _get_with_retry(
         COINGECKO_COINS_LIST_URL,
         params={"include_platform": "true"},
-        headers=headers,
+        headers=_coingecko_headers(),
         timeout=30,
     )
 
@@ -349,17 +362,13 @@ def _fetch_coingecko_index() -> tuple[dict[tuple[str, str], str], dict[str, list
 
 
 def _fetch_cg_market_caps(ids: list[str]) -> dict[str, float]:
-    headers = {"Accept": "application/json"}
-    if settings.coingecko_api_key:
-        headers["x-cg-demo-api-key"] = settings.coingecko_api_key
-
     out: dict[str, float] = {}
     for i in range(0, len(ids), 250):
         chunk = ids[i : i + 250]
         resp = _get_with_retry(
             COINGECKO_MARKETS_URL,
             params={"vs_currency": "usd", "ids": ",".join(chunk), "per_page": 250, "page": 1},
-            headers=headers,
+            headers=_coingecko_headers(),
             timeout=30,
         )
         for entry in resp.json():
@@ -415,30 +424,39 @@ def _normalize_twitter_handle(value: str | None) -> str | None:
     return v or None
 
 
+def _fetch_cg_detail_raw(
+    cg_id: str, *, market_data: bool = False, community_data: bool = False
+) -> dict:
+    """The full CoinGecko `/coins/{id}` response. `_fetch_cg_social_links`
+    below keeps market_data/community_data off (cheap -- used on the hot
+    matching path); scripts wanting the rest (e.g.
+    scripts/full_detail_pull.py) should pass market_data=True,
+    community_data=True and read the raw response directly instead of
+    duplicating the request."""
+    resp = _get_with_retry(
+        f"{COINGECKO_COIN_URL}/{cg_id}",
+        params={
+            "localization": "false",
+            "tickers": "false",
+            "market_data": "true" if market_data else "false",
+            "community_data": "true" if community_data else "false",
+            "developer_data": "false",
+            "sparkline": "false",
+        },
+        headers=_coingecko_headers(),
+        timeout=30,
+    )
+    return resp.json()
+
+
 def _fetch_cg_social_links(ids: list[str]) -> dict[str, dict]:
     """Per-candidate website/twitter from CoinGecko. Unlike market cap,
     there's no bulk endpoint for this -- one call per id -- so this is only
     used on the small set of symbols still ambiguous after the cheaper
     contract/unique-symbol/market-cap tiers."""
-    headers = {"Accept": "application/json"}
-    if settings.coingecko_api_key:
-        headers["x-cg-demo-api-key"] = settings.coingecko_api_key
-
     out: dict[str, dict] = {}
     for cg_id in ids:
-        resp = _get_with_retry(
-            f"{COINGECKO_COIN_URL}/{cg_id}",
-            params={
-                "localization": "false",
-                "tickers": "false",
-                "market_data": "false",
-                "community_data": "false",
-                "developer_data": "false",
-            },
-            headers=headers,
-            timeout=20,
-        )
-        links = resp.json().get("links", {})
+        links = _fetch_cg_detail_raw(cg_id).get("links", {})
         out[cg_id] = {
             "website_domain": _normalize_domain((links.get("homepage") or [None])[0]),
             "twitter": _normalize_twitter_handle(links.get("twitter_screen_name")),
@@ -521,15 +539,26 @@ def _match_coingecko_id(
     if symbol in overrides:
         return overrides[symbol], "override"
 
+    candidates = symbol_map.get(symbol, [])
+
     for platform in _platform_candidates(coin):
         cg_chain = CHAIN_SLUG_CMC_TO_CG.get(platform.get("slug"))
         token_address = platform.get("token_address")
         if cg_chain and token_address:
             cg_id = contract_map.get((cg_chain, token_address.lower()))
-            if cg_id:
+            # Require the matched CG coin's own symbol to equal this coin's
+            # (i.e. cg_id must be one of `candidates`) -- CMC's `platforms[]`
+            # for a *native* coin (BTC, ETH, ...) lists wrapped/bridged/pegged
+            # representations on OTHER chains under its own name, e.g.
+            # Ethereum's list includes Binance-Peg WETH's BNB Chain contract.
+            # Without this check, that contract-matches straight to CG's
+            # separate "binance-peg-weth" listing -- confirmed live: ETH
+            # (cmc id 1027) mismatched to it before this guard was added.
+            # A legitimate same-asset multi-chain token (USDC, SNX, ...) has
+            # the same symbol on every chain, so this doesn't cost real
+            # contract matches, only rejects wrapped/pegged false positives.
+            if cg_id and cg_id in candidates:
                 return cg_id, "contract"
-
-    candidates = symbol_map.get(symbol, [])
     if len(candidates) == 1:
         return candidates[0], "symbol"
     if len(candidates) > 1:

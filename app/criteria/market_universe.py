@@ -240,7 +240,7 @@ def _normalize_detail_platforms(platforms: list[dict] | None) -> list[dict]:
     return out
 
 
-def _fetch_cmc_detail_raw(cmc_id: int) -> dict:
+def fetch_cmc_detail_raw(cmc_id: int) -> dict:
     """The full, unfiltered `data` object from CMC's public per-coin detail
     API -- statistics, every platform/contract, urls, tags, holders, audits,
     supply provenance, etc. `fetch_cmc_info` below narrows this to just
@@ -271,7 +271,7 @@ def fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     out: dict[int, dict] = {}
     for i, cid in enumerate(ids):
         try:
-            entry = _fetch_cmc_detail_raw(cid)
+            entry = fetch_cmc_detail_raw(cid)
         except requests.exceptions.RequestException as exc:
             log.warning("market_universe: giving up on CMC detail for id=%s after retries (%s)", cid, exc)
             continue
@@ -407,7 +407,7 @@ def _normalize_twitter_handle(value: str | None) -> str | None:
     return v or None
 
 
-def _fetch_cg_detail_raw(
+def fetch_cg_detail_raw(
     cg_id: str, *, market_data: bool = False, community_data: bool = False
 ) -> dict:
     """The full CoinGecko `/coins/{id}` response. `_fetch_cg_social_links`
@@ -446,7 +446,7 @@ def _fetch_cg_social_links(ids: list[str]) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for cg_id in ids:
         try:
-            links = _fetch_cg_detail_raw(cg_id).get("links", {})
+            links = fetch_cg_detail_raw(cg_id).get("links", {})
         except requests.exceptions.RequestException as exc:
             log.warning("market_universe: giving up on CoinGecko social links for %s after retries (%s)", cg_id, exc)
             continue

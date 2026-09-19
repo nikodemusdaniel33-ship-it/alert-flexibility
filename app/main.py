@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+import requests
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -14,14 +15,31 @@ from app.auth import (
     verify_telegram_auth,
 )
 from app.config import settings
+from app.criteria.market_universe import fetch_cg_detail_raw, fetch_cmc_detail_raw
 from app.db import ensure_schema, get_db
 from app.models import Gap, GapStatus, Project, User
 from app.telegram import send_alert
+from scripts.compare_coin_detail import _fmt, build_rows
 
 ensure_schema()
 
 app = FastAPI(title="alert-flexibility")
 templates = Jinja2Templates(directory="templates")
+
+
+def _pretty_field_name(field_name: str) -> str:
+    """"social:website" -> "Website"; "contract:optimistic-ethereum" ->
+    "Contract - Optimistic Ethereum". Falls back to the raw name for
+    anything that isn't in the "category:detail" shape."""
+    if ":" not in field_name:
+        return field_name
+    category, detail = field_name.split(":", 1)
+    label = detail.replace("-", " ").replace("_", " ").title()
+    prefixes = {"social": "", "contract": "Contract - ", "explorer": "Explorer - "}
+    return f"{prefixes.get(category, category.title() + ' - ')}{label}"
+
+
+templates.env.filters["pretty_field"] = _pretty_field_name
 
 
 @app.get("/login")
@@ -82,6 +100,48 @@ def dashboard(request: Request, user: User = Depends(get_current_user), db: Sess
     )
     return templates.TemplateResponse(
         "dashboard.html", {"request": request, "projects": projects, "user": user, "GapStatus": GapStatus}
+    )
+
+
+@app.get("/projects/{project_id}/detail")
+def project_detail(
+    project_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    error = None
+    sections: list[dict] = []
+    try:
+        raw_cmc = fetch_cmc_detail_raw(int(project.cmc_id))
+        raw_cg = fetch_cg_detail_raw(project.coingecko_id, market_data=True, community_data=True)
+    except (requests.RequestException, ValueError) as exc:
+        error = str(exc)
+    else:
+        current_section = None
+        for row in build_rows(raw_cmc, raw_cg):
+            if row[0] == "section":
+                current_section = {"title": row[1], "rows": []}
+                sections.append(current_section)
+                continue
+            info, field_cmc, field_cg, data_cmc, data_cg = row
+            current_section["rows"].append(
+                {
+                    "info": info,
+                    "field_cmc": field_cmc,
+                    "field_cg": field_cg,
+                    "data_cmc": _fmt(data_cmc),
+                    "data_cg": _fmt(data_cg),
+                }
+            )
+
+    return templates.TemplateResponse(
+        "project_detail.html",
+        {"request": request, "project": project, "sections": sections, "error": error, "user": user},
     )
 
 

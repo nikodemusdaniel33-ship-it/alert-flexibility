@@ -27,60 +27,9 @@ import difflib
 import re
 import sys
 
+from app.chain_align import align_chains, unlabeled_cg_explorers
 from app.config import settings
 from app.criteria import market_universe as mu
-
-# CoinGecko's `links.blockchain_site[]` is a flat list of explorer URLs with
-# no chain label attached, unlike CMC's per-platform `contractExplorerUrl`.
-# This maps well-known explorer domains to our internal chain slug so they
-# can still be lined up per chain; an unrecognized domain lands in its own
-# "unlabeled" row instead of being guessed.
-EXPLORER_DOMAIN_TO_CHAIN_HINT = {
-    "etherscan.io": "ethereum",
-    "ethplorer.io": "ethereum",
-    "bscscan.com": "bnb",
-    "polygonscan.com": "polygon",
-    "snowtrace.io": "avalanche",
-    "snowscan.xyz": "avalanche",
-    "ftmscan.com": "fantom",
-    "optimistic.etherscan.io": "optimism",
-    "arbiscan.io": "arbitrum",
-    "nearblocks.io": "near-protocol",
-    "solscan.io": "solana",
-    "solanafm.com": "solana",
-    "tronscan.org": "tron",
-    "hecoinfo.com": "heco",
-    "explorer.energi.network": "energi",
-    "basescan.org": "base",
-    "cronoscan.com": "cronos",
-    "moonscan.io": "moonbeam",
-    "moonriver.moonscan.io": "moonriver",
-    "gnosisscan.io": "gnosis",
-    "zkscan.io": "zksync",
-    "explorer.zksync.io": "zksync",
-    "lineascan.build": "linea",
-    "scrollscan.com": "scroll",
-    "cardanoscan.io": "cardano",
-    "explorer.vechain.org": "vechain",
-    "oklink.com": "okb",
-    "tonscan.org": "ton",
-    "suiscan.xyz": "sui",
-    "explorer.sui.io": "sui",
-    "xdcscan.io": "xdc-network",
-    "mintscan.io": "osmosis",
-}
-
-# Reverse of CHAIN_SLUG_CMC_TO_CG, first-key-wins: that dict has more than
-# one internal slug mapping to the same CoinGecko chain (e.g. "optimism" and
-# "optimism-ethereum" both -> "optimistic-ethereum", covering variant slugs
-# CMC's own listing endpoint has been seen to return). A naive {v: k for...}
-# inversion lets whichever entry is defined LAST win, which silently split
-# Optimism into two separate chain rows here (verified live against
-# Synthetix's real 9-chain contract list). first-wins makes the choice
-# deterministic and picks the canonical, shorter alias.
-CG_SLUG_TO_INTERNAL: dict[str, str] = {}
-for _internal_slug, _cg_slug in mu.CHAIN_SLUG_CMC_TO_CG.items():
-    CG_SLUG_TO_INTERNAL.setdefault(_cg_slug, _internal_slug)
 
 # High on purpose: a low threshold reliably produces wrong pairs, since any
 # two "X Ecosystem" strings share enough characters to score moderately even
@@ -134,10 +83,6 @@ def _fmt(value) -> str:
     if isinstance(value, list):
         return ", ".join(str(v) for v in value if v) or "(kosong)"
     return str(value)
-
-
-def _prettify_chain(slug: str) -> str:
-    return slug.replace("-", " ").replace(":", " ").title()
 
 
 def _resolve_coingecko_id(cmc_id: int, raw_cmc: dict, overrides_path: str) -> tuple[str | None, str]:
@@ -270,35 +215,8 @@ def build_rows(raw_cmc: dict, raw_cg: dict) -> list[tuple]:
     rows.append(("Max Supply", "statistics.maxSupply", "market_data.max_supply", stats.get("maxSupply"), md.get("max_supply") if md.get("max_supply") else "∞ (null)"))
 
     # --- Contracts & explorers per chain (best-effort alignment) ---
-    chains: dict[str, dict] = {}
-    for p in raw_cmc.get("platforms") or []:
-        name = (p.get("contractPlatform") or "").strip()
-        key = mu.CMC_DETAIL_PLATFORM_NAME_TO_SLUG.get(name.lower()) or f"cmc-{name.lower()}"
-        row = chains.setdefault(key, {"label": name or key})
-        if name:
-            row["label"] = name
-        row["cmc_contract"] = p.get("contractAddress")
-        row["cmc_explorer"] = p.get("contractExplorerUrl")
-
-    for cg_slug, address in (raw_cg.get("platforms") or {}).items():
-        if not cg_slug or not address:
-            continue
-        key = CG_SLUG_TO_INTERNAL.get(cg_slug, cg_slug)
-        row = chains.setdefault(key, {"label": _prettify_chain(key)})
-        row["cg_contract"] = address
-
-    unlabeled_cg_explorers = []
-    for url in _g(raw_cg, "links", "blockchain_site", default=[]) or []:
-        if not url:
-            continue
-        domain = mu._normalize_domain(url)
-        hint = EXPLORER_DOMAIN_TO_CHAIN_HINT.get(domain or "")
-        if hint:
-            row = chains.setdefault(hint, {"label": _prettify_chain(hint)})
-            row.setdefault("cg_explorer_urls", []).append(url)
-        else:
-            unlabeled_cg_explorers.append(url)
-
+    chains = align_chains(raw_cmc, raw_cg)
+    other_cg_explorers = unlabeled_cg_explorers(raw_cg)
     ordered_keys = sorted(chains.keys(), key=lambda k: chains[k]["label"].lower())
 
     rows.append(("section", "Contract per Chain"))
@@ -318,8 +236,8 @@ def build_rows(raw_cmc: dict, raw_cg: dict) -> list[tuple]:
             (f"Explorer - {c['label']}", "platforms[].contractExplorerUrl", "links.blockchain_site[]",
              c.get("cmc_explorer"), cg_explorers)
         )
-    if unlabeled_cg_explorers:
-        rows.append(("Explorer - Other (CoinGecko, unrecognized domain)", None, "links.blockchain_site[]", None, unlabeled_cg_explorers))
+    if other_cg_explorers:
+        rows.append(("Explorer - Other (CoinGecko, unrecognized domain)", None, "links.blockchain_site[]", None, other_cg_explorers))
 
     # --- Socials ---
     urls = raw_cmc.get("urls") or {}
@@ -476,7 +394,7 @@ def main() -> None:
     args = parser.parse_args()
 
     print(f"Fetching CMC detail for id={args.cmc_id}...", file=sys.stderr)
-    raw_cmc = mu._fetch_cmc_detail_raw(args.cmc_id)
+    raw_cmc = mu.fetch_cmc_detail_raw(args.cmc_id)
 
     if args.cg_id:
         cg_id, method = args.cg_id, "manual_override_flag"
@@ -497,7 +415,7 @@ def main() -> None:
 
     print(f"  -> matched to CoinGecko id '{cg_id}' (method: {method})", file=sys.stderr)
     print(f"Fetching CoinGecko detail for id={cg_id}...", file=sys.stderr)
-    raw_cg = mu._fetch_cg_detail_raw(cg_id, market_data=True, community_data=True)
+    raw_cg = mu.fetch_cg_detail_raw(cg_id, market_data=True, community_data=True)
 
     rows = build_rows(raw_cmc, raw_cg)
     print_table(rows, raw_cmc.get("name", "?"), raw_cmc.get("symbol", "?"))

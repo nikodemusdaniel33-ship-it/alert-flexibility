@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ project.symbol }} · CMC vs CoinGecko detail</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, sans-serif; margin: 2rem; color: #1a1a1a; background: #fafafa; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    h1 { font-size: 1.25rem; }
+    table { border-collapse: collapse; width: 100%; background: #fff; margin-bottom: 1.5rem; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; font-size: 0.85rem; vertical-align: top; }
+    th { background: #f0f0f0; }
+    .section-header td { background: #d9e1f2; font-weight: 600; color: #1f4e78; }
+    .field-path { color: #888; font-size: 0.75rem; font-family: monospace; }
+    .empty { color: #999; font-style: italic; }
+    .back { margin-bottom: 1rem; display: inline-block; }
+    .error { color: #a30000; background: #fff4f4; border: 1px solid #f0c0c0; padding: 1rem; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <a class="back" href="/">&larr; back to dashboard</a>
+      <h1>{{ project.name }} ({{ project.symbol }}) — CMC vs CoinGecko</h1>
+    </div>
+    <div>Signed in as <strong>{{ user.display_name }}</strong> — <a href="/logout">sign out</a></div>
+  </div>
+
+  {% if error %}
+    <div class="error">Could not load live detail: {{ error }}</div>
+  {% else %}
+    {% for section in sections %}
+    <table>
+      <tr class="section-header"><td colspan="5">{{ section.title }}</td></tr>
+      <tr>
+        <th>Informasi</th>
+        <th>Field CMC</th>
+        <th>Field CG</th>
+        <th>Data CMC</th>
+        <th>Data CG</th>
+      </tr>
+      {% for row in section.rows %}
+      <tr>
+        <td>{{ row.info }}</td>
+        <td class="field-path">{{ row.field_cmc or '-' }}</td>
+        <td class="field-path">{{ row.field_cg or '-' }}</td>
+        <td class="{{ 'empty' if row.data_cmc == '(kosong)' else '' }}">{{ row.data_cmc }}</td>
+        <td class="{{ 'empty' if row.data_cg == '(kosong)' else '' }}">{{ row.data_cg }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endfor %}
+  {% endif %}
+</body>
+</html>

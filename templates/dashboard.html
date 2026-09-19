@@ -20,6 +20,11 @@
     input[type=text], input[type=number], input[type=datetime-local] { font-size: 0.75rem; padding: 2px 4px; width: 90px; }
     button { font-size: 0.72rem; padding: 2px 6px; cursor: pointer; }
     .error { color: #a30000; font-size: 0.75rem; }
+    .category-tag { display: inline-block; font-size: 0.65rem; padding: 0 5px; border-radius: 3px; margin-right: 4px; color: #fff; }
+    .category-social { background: #6a5acd; }
+    .category-contract { background: #b8860b; }
+    .category-explorer { background: #2a7d9c; }
+    .detail-link { font-size: 0.75rem; }
   </style>
 </head>
 <body>
@@ -41,7 +46,12 @@
       {% set latest = p.latest_check %}
       {% set gaps = p.open_gaps %}
       <tr class="{{ 'has-gap' if gaps else '' }}">
-        <td><strong>{{ p.symbol }}</strong><br><small>{{ p.name }}</small><br><small>{{ p.tier }} · {{ p.criteria_source }}</small></td>
+        <td>
+          <strong>{{ p.symbol }}</strong><br>
+          <small>{{ p.name }}</small><br>
+          <small>{{ p.tier }} · {{ p.criteria_source }}</small><br>
+          <a class="detail-link" href="/projects/{{ p.id }}/detail">Full CMC vs CG detail &rarr;</a>
+        </td>
         <td>
           {% if latest %}
             <small>{{ latest.checked_at.strftime('%Y-%m-%d %H:%M') }} UTC</small>
@@ -56,8 +66,11 @@
             <span class="ok">none</span>
           {% endif %}
           {% for gap in gaps %}
+          {% set category = gap.field_name.split(':')[0] if ':' in gap.field_name else '' %}
           <div class="gap-block {{ 'muted' if gap.status.value == 'MUTED' else '' }}">
-            <div class="gap-field">{{ gap.field_name }}
+            <div class="gap-field">
+              {% if category %}<span class="category-tag category-{{ category }}">{{ category }}</span>{% endif %}
+              {{ gap.field_name | pretty_field }}
               <span class="gap-meta">
                 {% if gap.status.value == 'MUTED' %}
                   muted until {{ gap.muted_until.strftime('%Y-%m-%d %H:%M') }} UTC

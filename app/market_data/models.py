@@ -80,12 +80,13 @@ class CmcBinanceListed(Base):
 
 
 class CoinDetail(Base):
-    """Full CMC + CoinGecko detail pulled for a coin (scripts/full_detail_pull.py):
-    the same website/twitter/telegram/reddit/whitepaper booleans used for
-    gap-checking elsewhere in the app, plus the complete raw API response
-    from each side (app/clients/*.py normally discard the raw payload once
-    the booleans are extracted -- this table keeps it). One row per coin,
-    replaced on each pull."""
+    """Full CMC + CoinGecko detail pulled for a coin (scripts/full_detail_pull.py),
+    using the same 9-field social diff + per-chain contract/explorer gap
+    logic as the live alerting worker (app/detail_compare.py), so this
+    reference table stays consistent with what actually drives Gap
+    creation. One row per coin, replaced on each pull (a snapshot, not a
+    history -- a full run touches every tracked coin and is comparatively
+    slow, so unlike cmc_top600/cmc_binance_listed this isn't append-only)."""
 
     __tablename__ = "coin_details"
 
@@ -96,20 +97,22 @@ class CoinDetail(Base):
     in_top600: Mapped[bool] = mapped_column(Boolean, default=False)
     on_binance_spot: Mapped[bool] = mapped_column(Boolean, default=False)
 
-    cmc_website: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cmc_twitter: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cmc_telegram: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cmc_reddit: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cmc_whitepaper: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    # {field_key: {label, cmc_value, cg_value, differs}} for the 9 social
+    # fields -- app.detail_compare.social_diffs()'s output verbatim.
+    social_diffs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # {chain_key: {"contract_missing": bool, "explorer_missing": bool}} --
+    # derived from app.detail_compare.field_checklist()'s contract:/explorer:
+    # entries, one entry per chain either side has a contract/explorer for.
+    chain_gaps: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Count of True entries across social_diffs + chain_gaps, for sorting
+    # /filtering without unpacking the JSON columns.
+    gap_count: Mapped[int] = mapped_column(Integer, default=0, index=True)
+
     cmc_raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cmc_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    cg_website: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cg_twitter: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cg_telegram: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cg_reddit: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cg_whitepaper: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     cg_raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     cg_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

@@ -143,6 +143,25 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
 → `full_detail_pull`.
 
+## Other standalone scripts
+
+- `python -m scripts.preview_market_universe [--top-n N] [--compare-sample N | --compare-all] [--csv out.csv]`
+  — standalone preview of `MarketUniverseProvider`'s 3 steps (detect top-N +
+  Binance Spot, map to CoinGecko ids, sample-compare CMC vs CoinGecko
+  socials) without needing the database or app running. `--compare-sample 0`
+  runs detection + mapping only, with no API key needed at all; the compare
+  step needs `CMC_API_KEY`.
+- `python -m scripts.compare_coin_detail --cmc-id ID [--cg-id ID] [--overrides path.yaml] [--csv out.csv] [--xlsx out.xlsx]`
+  — given just a CMC id, maps it to a CoinGecko id (same 5-tier matcher as
+  `MarketUniverseProvider`) and prints/exports the full side-by-side field
+  comparison for that one coin: identity, market data, supply, per-chain
+  contracts and block explorers, socials, CMC-only metadata (holders,
+  CertiK, audits, token unlocks, liquidity pools), and matched/unmatched
+  tags vs categories. No API key needed. Pass `--cg-id` to skip auto-mapping
+  when you already know the right CoinGecko id. Not the same as
+  `scripts.full_detail_pull` above: this one is a single-coin CLI
+  export/comparison tool, unrelated to the `coin_details` Postgres table.
+
 ## Local setup
 
 ```

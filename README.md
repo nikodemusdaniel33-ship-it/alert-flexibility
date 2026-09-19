@@ -159,11 +159,21 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 - `python -m scripts.import_cmc_cg_mapping` — loads that CSV into
   `cmc_cg_mapping` (upsert by `cmc_id`; safe to re-run).
 - `python -m scripts.pull_top600 [--top-n 600]` — snapshots the current
-  top-N CMC coins by market cap into `cmc_top600` (replaces the table each
-  run; a snapshot, not a history).
+  top-N CMC coins by market cap into `cmc_top600`. **Append-only**: each
+  run inserts a new batch of rows sharing one `fetched_at` timestamp
+  rather than replacing the table, so history is kept. Readers wanting
+  the current snapshot filter to `MAX(fetched_at)` (see `/market-data`
+  in `app/main.py`).
 - `python -m scripts.pull_binance_listed` — snapshots CMC-listed coins
-  currently on Binance Spot into `cmc_binance_listed`. Reuses names from
-  `cmc_top600` where possible; run `pull_top600` first for fewer API calls.
+  currently on Binance Spot into `cmc_binance_listed`, same append-only
+  convention. Reuses names from `cmc_top600`'s *latest* batch where
+  possible; run `pull_top600` first for fewer API calls.
+
+Both run daily via a dedicated Railway cron service (`market-data-cron`,
+`cronSchedule: 0 2 * * *`, `restartPolicyType: NEVER`) rather than
+continuously — Railway only starts its container at the scheduled tick,
+not on deploy. The `/market-data` dashboard page always shows the latest
+batch, with a "last fetched" timestamp per tab.
 - `python -m scripts.full_detail_pull [--limit N]` — for the union of the
   two tables above, resolves each coin's CoinGecko id via `cmc_cg_mapping`
   (only `valid=True` rows are trusted), pulls full CMC + CoinGecko detail

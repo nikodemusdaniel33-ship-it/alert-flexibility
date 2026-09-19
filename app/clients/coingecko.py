@@ -1,6 +1,5 @@
-import requests
-
 from app.config import settings
+from app.retry import get_with_retry
 
 BASE_URL = "https://api.coingecko.com/api/v3/coins/{id}"
 
@@ -15,7 +14,7 @@ def fetch_socials(coingecko_id: str) -> dict:
     if settings.coingecko_api_key:
         headers["x-cg-demo-api-key"] = settings.coingecko_api_key
 
-    resp = requests.get(
+    resp = get_with_retry(
         BASE_URL.format(id=coingecko_id),
         params={
             "localization": "false",
@@ -27,7 +26,6 @@ def fetch_socials(coingecko_id: str) -> dict:
         headers=headers,
         timeout=15,
     )
-    resp.raise_for_status()
     payload = resp.json()
     links = payload.get("links", {})
 

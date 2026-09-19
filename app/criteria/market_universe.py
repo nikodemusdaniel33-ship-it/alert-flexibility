@@ -12,7 +12,7 @@ Pro-API-equivalent of the exchange-listing lookup is gated to Hobbyist tier
 and above; using the public API for everything here keeps one consistent,
 key-free code path instead of splitting it across two auth models. Being
 undocumented, CMC could change or block this without notice -- if that ever
-happens, `_fetch_cmc_universe`/`_fetch_cmc_info` are where to swap back to
+happens, `fetch_cmc_universe`/`fetch_cmc_info` are where to swap back to
 the Pro API (`cryptocurrency/listings/latest` / `v2/cryptocurrency/info`,
 both take an `X-CMC_PRO_API_KEY` header and are available on the Basic plan).
 
@@ -57,11 +57,11 @@ import logging
 import re
 import time
 
-import requests
 import yaml
 
 from app.criteria.base import Candidate
 from app.config import settings
+from app.retry import get_with_retry
 
 log = logging.getLogger("criteria.market_universe")
 
@@ -79,10 +79,10 @@ COINGECKO_COINS_LIST_URL = "https://api.coingecko.com/api/v3/coins/list"
 COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
 COINGECKO_COIN_URL = "https://api.coingecko.com/api/v3/coins"
 
-# Pace between the individual per-id calls _fetch_cmc_info makes to
+# Pace between the individual per-id calls fetch_cmc_info makes to
 # CMC_DETAIL_URL (that endpoint has no bulk/batch form, unlike the Pro API's
 # v2/cryptocurrency/info) -- a plain courtesy delay, not a rate-limit
-# response; _get_with_retry still handles 429s/connection hiccups on top.
+# response; get_with_retry still handles 429s/connection hiccups on top.
 CMC_DETAIL_REQUEST_DELAY_SECONDS = 0.1
 
 # A symbol match with >1 CoinGecko candidate (e.g. "BTC" also matches a
@@ -179,46 +179,18 @@ CMC_DETAIL_PLATFORM_NAME_TO_SLUG = {
 }
 
 
-def _get_with_retry(url: str, *, max_retries: int = 5, **kwargs) -> requests.Response:
-    """A full sync makes many calls to CMC and CoinGecko back to back (top-N
-    listing, exchange pairs, per-id detail lookups, the full coin index,
-    market caps, per-candidate social links...); on both APIs' free/lower
-    tiers, 429s are routine, not exceptional, and CMC's public per-id detail
-    endpoint (no bulk form, so it's hit far more often) has been seen to drop
-    connections with a transient SSL error under load. Retries with backoff
-    (honoring Retry-After on a 429 when the API sends one) before giving up."""
-    for attempt in range(max_retries + 1):
-        try:
-            resp = requests.get(url, **kwargs)
-        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
-            if attempt == max_retries:
-                raise
-            wait = 2 ** (attempt + 1)
-            log.warning("market_universe: connection error on %s (%s), retrying in %ds", url, exc, wait)
-            time.sleep(wait)
-            continue
-
-        if resp.status_code != 429 or attempt == max_retries:
-            resp.raise_for_status()
-            return resp
-        wait = float(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
-        log.warning("market_universe: rate-limited (429) on %s, retrying in %.0fs", url, wait)
-        time.sleep(wait)
-    raise RuntimeError("unreachable")  # loop always returns or raises above
-
-
-def _fetch_cmc_universe(limit: int) -> list[dict]:
+def fetch_cmc_universe(limit: int) -> list[dict]:
     """Top-`limit` CMC coins by market cap, via CMC's public listing API
     (paginated; a single call covers anything up to 5000). Each coin's
     `platform` here is CMC's single "primary" chain for it (id/name/slug/
     token_address) -- fine for most coins, but see `platforms` (plural) in
-    _fetch_cmc_info for coins where checking every chain matters more."""
+    fetch_cmc_info for coins where checking every chain matters more."""
     coins: list[dict] = []
     start = 1
     page_size = 5000
     while start <= limit:
         page_limit = min(page_size, limit - start + 1)
-        resp = _get_with_retry(
+        resp = get_with_retry(
             CMC_LISTING_URL,
             params={
                 "start": start,
@@ -253,7 +225,7 @@ def _fetch_cmc_universe(limit: int) -> list[dict]:
 def _normalize_detail_platforms(platforms: list[dict] | None) -> list[dict]:
     """Turns CMC_DETAIL_URL's `platforms[]` (keyed by a display name, e.g.
     "BNB Smart Chain (BEP20)") into the same {slug, token_address} shape
-    _fetch_cmc_universe's `platform` uses, for every chain CMC lists the
+    fetch_cmc_universe's `platform` uses, for every chain CMC lists the
     coin on -- not just one, since CMC's own ordering isn't priority-ordered
     (confirmed live: USDC's Ethereum entry was #84 of 97). Entries on a
     chain CMC_DETAIL_PLATFORM_NAME_TO_SLUG doesn't recognize are dropped;
@@ -267,7 +239,7 @@ def _normalize_detail_platforms(platforms: list[dict] | None) -> list[dict]:
     return out
 
 
-def _fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
+def fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     """Per-id name/symbol/platforms/urls from CMC's public detail API. Used
     both for Binance-listed coins that fell outside the top-N pull (need
     `platforms` for contract matching) and for coins that reach the
@@ -276,7 +248,7 @@ def _fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     endpoint has no bulk form -- one request per id, paced accordingly."""
     out: dict[int, dict] = {}
     for i, cid in enumerate(ids):
-        resp = _get_with_retry(
+        resp = get_with_retry(
             CMC_DETAIL_URL,
             params={"id": cid},
             headers={"Accept": "application/json"},
@@ -297,7 +269,7 @@ def _fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     return out
 
 
-def _fetch_cmc_binance_spot_ids() -> dict[int, dict]:
+def fetch_cmc_binance_spot_ids() -> dict[int, dict]:
     """{cmc_id: {symbol, slug}} for every coin CMC lists as spot-traded on
     Binance, via CMC's public site API (see module-level comment on
     CMC_PUBLIC_MARKET_PAIRS_URL for why not the documented endpoint)."""
@@ -305,7 +277,7 @@ def _fetch_cmc_binance_spot_ids() -> dict[int, dict]:
     start = 1
     limit = 1000
     while True:
-        resp = _get_with_retry(
+        resp = get_with_retry(
             CMC_PUBLIC_MARKET_PAIRS_URL,
             params={"slug": BINANCE_SLUG, "category": "spot", "start": start, "limit": limit, "convert": "USD"},
             headers={"Accept": "application/json"},
@@ -330,7 +302,7 @@ def _fetch_coingecko_index() -> tuple[dict[tuple[str, str], str], dict[str, list
     if settings.coingecko_api_key:
         headers["x-cg-demo-api-key"] = settings.coingecko_api_key
 
-    resp = _get_with_retry(
+    resp = get_with_retry(
         COINGECKO_COINS_LIST_URL,
         params={"include_platform": "true"},
         headers=headers,
@@ -356,7 +328,7 @@ def _fetch_cg_market_caps(ids: list[str]) -> dict[str, float]:
     out: dict[str, float] = {}
     for i in range(0, len(ids), 250):
         chunk = ids[i : i + 250]
-        resp = _get_with_retry(
+        resp = get_with_retry(
             COINGECKO_MARKETS_URL,
             params={"vs_currency": "usd", "ids": ",".join(chunk), "per_page": 250, "page": 1},
             headers=headers,
@@ -426,7 +398,7 @@ def _fetch_cg_social_links(ids: list[str]) -> dict[str, dict]:
 
     out: dict[str, dict] = {}
     for cg_id in ids:
-        resp = _get_with_retry(
+        resp = get_with_retry(
             f"{COINGECKO_COIN_URL}/{cg_id}",
             params={
                 "localization": "false",
@@ -458,7 +430,7 @@ def _resolve_ambiguous_by_social_match(
     if not still_ambiguous:
         return {}
 
-    cmc_info = _fetch_cmc_info(list(still_ambiguous.keys()))
+    cmc_info = fetch_cmc_info(list(still_ambiguous.keys()))
 
     all_candidate_ids = {
         cg_id for coin in still_ambiguous.values() for cg_id in symbol_map.get(coin["symbol"].upper(), [])
@@ -499,8 +471,8 @@ def _load_overrides(path: str) -> dict[str, str]:
 
 
 def _platform_candidates(coin: dict) -> list[dict]:
-    """Coins from _fetch_cmc_universe carry a single `platform`; coins from
-    _fetch_cmc_info carry a `platforms` list (every chain CMC knows about
+    """Coins from fetch_cmc_universe carry a single `platform`; coins from
+    fetch_cmc_info carry a `platforms` list (every chain CMC knows about
     for that coin). Normalized to a list either way so _match_coingecko_id
     can try all of them without caring which endpoint a coin came from."""
     if coin.get("platforms"):
@@ -551,13 +523,13 @@ class MarketUniverseProvider:
 
     def fetch_candidates(self) -> list[Candidate]:
         top_n = settings.market_universe_top_n
-        top_n_coins = _fetch_cmc_universe(top_n)
+        top_n_coins = fetch_cmc_universe(top_n)
         top_n_by_id: dict[int, dict] = {coin["id"]: coin for coin in top_n_coins}
 
-        binance_spot_ids = _fetch_cmc_binance_spot_ids()
+        binance_spot_ids = fetch_cmc_binance_spot_ids()
 
         missing_ids = [cid for cid in binance_spot_ids if cid not in top_n_by_id]
-        extra_info = _fetch_cmc_info(missing_ids) if missing_ids else {}
+        extra_info = fetch_cmc_info(missing_ids) if missing_ids else {}
 
         overrides = _load_overrides(settings.market_universe_overrides_path)
         contract_map, symbol_map = _fetch_coingecko_index()

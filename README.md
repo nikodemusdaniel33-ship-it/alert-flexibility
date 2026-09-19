@@ -111,6 +111,38 @@ the tradeoff for not needing a CMC API key; if that ever matters more than
 staying key-free, swap it for the Pro API's batched `v2/cryptocurrency/info`
 (see the module docstring).
 
+## Market-data reference pipeline (standalone, not yet wired into alerting)
+
+A separate set of tables and scripts for building a reviewed, stable
+CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
+
+- `app/market_data/models.py` — `cmc_cg_mapping`, `cmc_top600`,
+  `cmc_binance_listed`, `coin_details`.
+- `data/cmc_cg_mapping.csv` (+ `data/cmc_cg_unmatched.csv`) — a
+  human-reviewed CMC↔CoinGecko mapping export. Its `valid` column marks
+  confidently-matched rows (contract address or a unique symbol) versus
+  heuristic ones (market-cap or social-link disambiguation) pending manual
+  confirmation.
+- `python -m scripts.import_cmc_cg_mapping` — loads that CSV into
+  `cmc_cg_mapping` (upsert by `cmc_id`; safe to re-run).
+- `python -m scripts.pull_top600 [--top-n 600]` — snapshots the current
+  top-N CMC coins by market cap into `cmc_top600` (replaces the table each
+  run; a snapshot, not a history).
+- `python -m scripts.pull_binance_listed` — snapshots CMC-listed coins
+  currently on Binance Spot into `cmc_binance_listed`. Reuses names from
+  `cmc_top600` where possible; run `pull_top600` first for fewer API calls.
+- `python -m scripts.full_detail_pull [--limit N]` — for the union of the
+  two tables above, resolves each coin's CoinGecko id via `cmc_cg_mapping`
+  (only `valid=True` rows are trusted), pulls full CMC + CoinGecko detail
+  (the same website/twitter/telegram/reddit/whitepaper fields used for
+  gap-checking, plus each side's complete raw API response) into
+  `coin_details`. CMC detail is fetched in bulk; CoinGecko has no bulk
+  detail endpoint, so that side is one call per coin and is the slow part
+  of a full run — use `--limit` while testing.
+
+Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
+→ `full_detail_pull`.
+
 ## Local setup
 
 ```

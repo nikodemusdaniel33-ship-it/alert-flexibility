@@ -17,6 +17,7 @@ from app.auth import (
 from app.config import settings
 from app.criteria.market_universe import fetch_cg_detail_raw, fetch_cmc_detail_raw
 from app.db import ensure_schema, get_db
+from app.market_data.models import CmcBinanceListed, CmcTop600
 from app.models import Gap, GapStatus, Project, User
 from app.telegram import send_alert
 from scripts.compare_coin_detail import _fmt, build_rows
@@ -142,6 +143,20 @@ def project_detail(
     return templates.TemplateResponse(
         "project_detail.html",
         {"request": request, "project": project, "sections": sections, "error": error, "user": user},
+    )
+
+
+@app.get("/market-data")
+def market_data_page(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    top600 = db.query(CmcTop600).order_by(CmcTop600.cmc_rank).all()
+    binance_listed = db.query(CmcBinanceListed).order_by(CmcBinanceListed.cmc_rank.is_(None), CmcBinanceListed.cmc_rank).all()
+    return templates.TemplateResponse(
+        "market_data.html",
+        {"request": request, "user": user, "top600": top600, "binance_listed": binance_listed},
     )
 
 

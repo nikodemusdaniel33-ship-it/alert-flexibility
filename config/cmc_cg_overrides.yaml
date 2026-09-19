@@ -1,0 +1,16 @@
+# Manual CMC-symbol -> CoinGecko-id overrides for
+# app.criteria.market_universe.MarketUniverseProvider.
+#
+# The provider auto-matches CMC coins to a CoinGecko id by contract address,
+# then by symbol (only when the symbol is unique on CoinGecko). Some coins
+# still can't be resolved automatically — most often because CoinGecko lists
+# several coins under the same symbol (wrapped/bridged versions, unrelated
+# projects that share a ticker) or the coin's chain isn't in
+# CHAIN_SLUG_CMC_TO_CG yet. Check the worker logs for "market_universe: N/M
+# candidate coins had no CoinGecko match" and pin the right id here.
+#
+# Keys are matched case-insensitively against the CMC symbol.
+overrides: {}
+# Example:
+# overrides:
+#   XYZ: some-coingecko-id

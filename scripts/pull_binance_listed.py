@@ -6,13 +6,17 @@ app/criteria/market_universe.py. Binance Spot membership comes from CMC's
 own exchange data (a coin's CMC id on Binance's market pairs), not
 Binance's API -- see that module's docstring for why.
 
-Names for coins already in cmc_top600 (run scripts/pull_top600 first for
-best results) come from that table for free; for the rest -- Binance-listed
-coins outside the top-N pull -- one extra CMC detail call each. Replaces
-the cmc_binance_listed table wholesale each run.
+Names for coins already in cmc_top600's latest batch (run scripts/pull_top600
+first for best results) come from that table for free; for the rest --
+Binance-listed coins outside the top-N pull -- one extra CMC detail call
+each. Append-only, same convention as pull_top600.py: every run inserts a
+new batch sharing one fetched_at, rather than replacing the table.
 """
 
 import logging
+from datetime import datetime, timezone
+
+from sqlalchemy import func
 
 from app.criteria.market_universe import fetch_cmc_binance_spot_ids, fetch_cmc_info
 from app.db import SessionLocal, ensure_schema
@@ -27,16 +31,21 @@ def run() -> None:
 
     log.info("Fetching CMC-listed coins currently on Binance Spot...")
     binance_ids = fetch_cmc_binance_spot_ids()
+    batch_time = datetime.now(timezone.utc)
 
     db = SessionLocal()
     try:
-        top600_by_id = {row.cmc_id: row for row in db.query(CmcTop600).all()}
+        latest_top600_at = db.query(func.max(CmcTop600.fetched_at)).scalar()
+        top600_by_id = (
+            {row.cmc_id: row for row in db.query(CmcTop600).filter(CmcTop600.fetched_at == latest_top600_at)}
+            if latest_top600_at
+            else {}
+        )
         missing_ids = [cid for cid in binance_ids if str(cid) not in top600_by_id]
         if missing_ids:
             log.info("%d coins not in cmc_top600 -- fetching names individually", len(missing_ids))
         info = fetch_cmc_info(missing_ids) if missing_ids else {}
 
-        db.query(CmcBinanceListed).delete()
         for cid, meta in binance_ids.items():
             cid_str = str(cid)
             top = top600_by_id.get(cid_str)
@@ -46,9 +55,13 @@ def run() -> None:
                 detail = info.get(cid)
                 name = detail["name"] if detail else meta.get("slug")
                 rank = None
-            db.add(CmcBinanceListed(cmc_id=cid_str, name=name, symbol=meta["symbol"], cmc_rank=rank))
+            db.add(
+                CmcBinanceListed(
+                    cmc_id=cid_str, name=name, symbol=meta["symbol"], cmc_rank=rank, fetched_at=batch_time
+                )
+            )
         db.commit()
-        log.info("cmc_binance_listed: %d coins", len(binance_ids))
+        log.info("cmc_binance_listed: %d coins (batch %s)", len(binance_ids), batch_time.isoformat())
     finally:
         db.close()
 

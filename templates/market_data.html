@@ -41,7 +41,7 @@
   </div>
 
   <div class="tab-content" id="content-top600">
-    <p class="count">{{ top600 | length }} coins</p>
+    <p class="count">{{ top600 | length }} coins{% if latest_top600_at %} · last fetched {{ latest_top600_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</p>
     <table>
       <thead><tr><th>Rank</th><th>Symbol</th><th>Name</th><th>CMC ID</th><th>Fetched</th></tr></thead>
       <tbody>
@@ -55,7 +55,7 @@
   </div>
 
   <div class="tab-content" id="content-binance">
-    <p class="count">{{ binance_listed | length }} coins</p>
+    <p class="count">{{ binance_listed | length }} coins{% if latest_binance_at %} · last fetched {{ latest_binance_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</p>
     <table>
       <thead><tr><th>Rank</th><th>Symbol</th><th>Name</th><th>CMC ID</th><th>Fetched</th></tr></thead>
       <tbody>

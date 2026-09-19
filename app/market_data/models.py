@@ -8,7 +8,7 @@ wired into the live alerting worker.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -45,31 +45,38 @@ class CmcCgMapping(Base):
 
 
 class CmcTop600(Base):
-    """Snapshot of the current top-N CMC coins by market cap (tab 1).
-    Replaced wholesale on each run of scripts/pull_top600.py -- this
-    table always reflects the latest pull, not a history."""
+    """Top-N CMC coins by market cap (tab 1), one batch of rows per run of
+    scripts/pull_top600.py (all rows in a batch share the same fetched_at).
+    Append-only history -- callers wanting the current snapshot must filter
+    to the latest fetched_at themselves (see app.main's /market-data)."""
 
     __tablename__ = "cmc_top600"
+    __table_args__ = (Index("ix_cmc_top600_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
 
-    cmc_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
     name: Mapped[str] = mapped_column(String(256))
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     cmc_rank: Mapped[int] = mapped_column(Integer)
-    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
 class CmcBinanceListed(Base):
-    """Snapshot of CMC-listed coins currently trading on Binance Spot
-    (tab 2), per CMC's own exchange listing data. Replaced wholesale on
-    each run of scripts/pull_binance_listed.py."""
+    """CMC-listed coins currently trading on Binance Spot (tab 2), per
+    CMC's own exchange listing data. One batch of rows per run of
+    scripts/pull_binance_listed.py (all rows in a batch share the same
+    fetched_at). Append-only history, same latest-batch convention as
+    CmcTop600."""
 
     __tablename__ = "cmc_binance_listed"
+    __table_args__ = (Index("ix_cmc_binance_listed_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
 
-    cmc_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
     name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
 class CoinDetail(Base):

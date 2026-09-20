@@ -166,9 +166,15 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
   the current snapshot filter to `MAX(fetched_at)` (see `/market-data`
   in `app/main.py`).
 - `python -m scripts.pull_binance_listed` — snapshots CMC-listed coins
-  currently on Binance Spot into `cmc_binance_listed`, same append-only
-  convention. Reuses names from `cmc_top600`'s *latest* batch where
-  possible; run `pull_top600` first for fewer API calls.
+  currently tradeable on Binance into `cmc_binance_listed`, same
+  append-only convention. Unions spot, perpetual, and futures market
+  pairs, deduplicated by `cmc_id` (a coin listed under more than one
+  category still gets exactly one row) — broader on purpose than
+  `MarketUniverseProvider`'s live auto-tracking criteria above, which
+  stays spot-only (Binance's perpetual listings include tokenized-stock
+  contracts like AAPL/ADBE alongside crypto, not something to
+  auto-track/alert on). Reuses names from `cmc_top600`'s *latest* batch
+  where possible; run `pull_top600` first for fewer API calls.
 - `python -m scripts.build_cmc_universe` — unions `cmc_top600`'s and
   `cmc_binance_listed`'s latest batches into `cmc_universe`: one row per
   CMC id tracked by either source, with `in_top600`/`on_binance_spot`

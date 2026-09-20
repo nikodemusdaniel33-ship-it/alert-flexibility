@@ -62,8 +62,11 @@ class CmcTop600(Base):
 
 
 class CmcBinanceListed(Base):
-    """CMC-listed coins currently trading on Binance Spot (tab 2), per
-    CMC's own exchange listing data. One batch of rows per run of
+    """CMC-listed coins currently tradeable on Binance (tab 2) -- spot,
+    perpetual, and futures markets, unioned and deduplicated by cmc_id --
+    per CMC's own exchange listing data. Broader than the live worker's
+    auto-tracking criteria (app.criteria.market_universe.fetch_cmc_binance_spot_ids,
+    spot-only on purpose). One batch of rows per run of
     scripts/pull_binance_listed.py (all rows in a batch share the same
     fetched_at). Append-only history, same latest-batch convention as
     CmcTop600."""
@@ -86,8 +89,12 @@ class CmcUniverse(Base):
     batches and unioning them -- no CMC API calls of its own, no change to
     either source table or /market-data (which keeps reading them
     directly). in_top600 / on_binance_spot flag which source(s) found this
-    id; cmc_rank and name/symbol are taken from cmc_top600 when the id is
-    there (canonical), falling back to cmc_binance_listed's copy for a
+    id; on_binance_spot means "found in cmc_binance_listed" specifically
+    -- despite the name, that source (and so this flag) covers Binance
+    spot, perpetual, and futures market pairs, not spot alone; kept
+    as-is to avoid a schema rename on an already-populated table. cmc_rank
+    and name/symbol are taken from cmc_top600 when the id is there
+    (canonical), falling back to cmc_binance_listed's copy for a
     Binance-only id. Append-only, same latest-batch convention as
     CmcTop600/CmcBinanceListed -- run after both."""
 

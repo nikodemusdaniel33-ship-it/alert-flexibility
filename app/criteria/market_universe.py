@@ -290,9 +290,10 @@ def fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     return out
 
 
-def fetch_cmc_binance_spot_ids() -> dict[int, dict]:
-    """{cmc_id: {symbol, slug}} for every coin CMC lists as spot-traded on
-    Binance, via CMC's public site API (see module-level comment on
+def _fetch_cmc_binance_category_ids(category: str) -> dict[int, dict]:
+    """{cmc_id: {symbol, slug}} for every base currency CMC lists under one
+    market-pairs category (spot | perpetual | futures) for Binance, via
+    CMC's public site API (see module-level comment on
     CMC_PUBLIC_MARKET_PAIRS_URL for why not the documented endpoint)."""
     ids: dict[int, dict] = {}
     start = 1
@@ -300,7 +301,7 @@ def fetch_cmc_binance_spot_ids() -> dict[int, dict]:
     while True:
         resp = get_with_retry(
             CMC_PUBLIC_MARKET_PAIRS_URL,
-            params={"slug": BINANCE_SLUG, "category": "spot", "start": start, "limit": limit, "convert": "USD"},
+            params={"slug": BINANCE_SLUG, "category": category, "start": start, "limit": limit, "convert": "USD"},
             headers={"Accept": "application/json"},
             timeout=30,
         )
@@ -312,6 +313,31 @@ def fetch_cmc_binance_spot_ids() -> dict[int, dict]:
         if len(batch) < limit or start + limit > total:
             break
         start += limit
+    return ids
+
+
+def fetch_cmc_binance_spot_ids() -> dict[int, dict]:
+    """{cmc_id: {symbol, slug}} for every coin CMC lists as spot-traded on
+    Binance -- used by MarketUniverseProvider (live auto-tracking, see
+    below) to decide which coins to alert on. Spot only, deliberately: a
+    coin tradeable as a Binance perpetual/futures contract isn't
+    necessarily a coin worth tracking for gap alerts (Binance's perpetual
+    listings include tokenized-stock contracts like AAPL/ADBE, not just
+    crypto) -- see fetch_cmc_binance_listed_ids for the broader reference-
+    pipeline version of this same union."""
+    return _fetch_cmc_binance_category_ids("spot")
+
+
+def fetch_cmc_binance_listed_ids() -> dict[int, dict]:
+    """{cmc_id: {symbol, slug}} for every coin CMC lists as tradeable on
+    Binance across spot, perpetual, and futures market pairs -- the union,
+    deduplicated by cmc_id (a coin listed under more than one category
+    only appears once). Used by scripts/pull_binance_listed.py for the
+    reference pipeline; NOT used by the live worker's auto-tracking (see
+    fetch_cmc_binance_spot_ids, which stays spot-only on purpose)."""
+    ids: dict[int, dict] = {}
+    for category in ("spot", "perpetual", "futures"):
+        ids.update(_fetch_cmc_binance_category_ids(category))
     return ids
 
 

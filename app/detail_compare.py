@@ -109,7 +109,7 @@ def _social_field_specs(raw_cmc: dict, raw_cg: dict) -> list[tuple[str, str, obj
         ("whitepaper", "Technical Doc/Whitepaper", _first(urls.get("technical_doc")), links.get("whitepaper"), _normalize_url_path),
         ("forum", "Message Board/Forum", _first(urls.get("message_board")), _first(links.get("official_forum_url")), _normalize_url_path),
         ("blog", "Announcement/Blog", _first(urls.get("announcement")), _first(links.get("announcement_url")), _normalize_url_path),
-        ("facebook", "Facebook", urls.get("facebook"), links.get("facebook_username"), lambda v: _normalize_handle(v)),
+        ("facebook", "Facebook", _first(urls.get("facebook")), links.get("facebook_username"), lambda v: _normalize_handle(v)),
     ]
 
 

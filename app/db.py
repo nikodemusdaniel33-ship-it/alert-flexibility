@@ -26,29 +26,42 @@ def get_db():
 
 
 def ensure_schema() -> None:
-    """Create any missing tables, and heal tables left over from an older
-    model shape (create_all only adds tables that don't exist yet, so a
-    renamed/added column on an existing table is otherwise silently
-    ignored). There's no real data yet, so a stale table is just dropped
-    and recreated rather than migrated column-by-column. Once this project
-    has real data across a schema change, replace this with Alembic."""
+    """Create any missing tables. Does NOT auto-heal an existing table
+    whose columns no longer match its model -- this function used to
+    drop_all() the *entire* database (every table, not just the mismatched
+    one) whenever any single table looked stale, on the reasoning that
+    there was no real data yet to lose. That stopped being true once
+    `users`/`projects`/`gaps` held real Telegram-linked accounts and alert
+    history; a silent full-database wipe triggered by an unrelated
+    reference-data column addition is not an acceptable failure mode
+    (see git history on this function for the original, since-obsolete
+    reasoning). A mismatch now raises instead of guessing -- whoever is
+    making the schema change picks the migration explicitly (an ALTER
+    TABLE for an additive change; a deliberate, reviewed reset for a
+    genuinely destructive one) rather than every script silently deciding
+    for them at startup. This is still not a real migration tool -- once
+    this project needs more than additive column changes, replace it with
+    Alembic."""
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
 
-    stale = False
+    mismatches: list[str] = []
     for table in Base.metadata.sorted_tables:
         if table.name not in existing_tables:
             continue
         expected_columns = {c.name for c in table.columns}
         actual_columns = {c["name"] for c in inspector.get_columns(table.name)}
-        if not expected_columns.issubset(actual_columns):
-            stale = True
-            break
+        missing = expected_columns - actual_columns
+        if missing:
+            mismatches.append(f"{table.name} is missing column(s): {', '.join(sorted(missing))}")
 
-    if stale:
-        # A single stale table can have FK'd children (e.g. gaps ->
-        # projects), so drop everything together rather than fight
-        # constraint ordering table-by-table.
-        Base.metadata.drop_all(bind=engine)
+    if mismatches:
+        raise RuntimeError(
+            "Database schema is out of date with the current models:\n  "
+            + "\n  ".join(mismatches)
+            + "\nAdd the missing column(s) with an explicit ALTER TABLE (or a deliberate, reviewed reset "
+            "if the change is genuinely destructive) before running this again -- this no longer "
+            "auto-drops tables to fix a mismatch."
+        )
 
     Base.metadata.create_all(bind=engine)

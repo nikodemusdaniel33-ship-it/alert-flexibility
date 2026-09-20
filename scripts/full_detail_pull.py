@@ -1,7 +1,7 @@
-"""Pull raw CMC and CoinGecko field values for coins in cmc_top600 union
-cmc_binance_listed (latest batch of each) that have a resolved (valid=True)
-CoinGecko id, into two separate tables -- cmc_field_details and
-cg_field_details (`python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]`).
+"""Pull raw CMC and CoinGecko field values for coins in cmc_universe's
+latest batch that have a resolved (valid=True) CoinGecko id, into two
+separate tables -- cmc_field_details and cg_field_details
+(`python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]`).
 
 Long/normalized, one table per source: each row is (id, field_type,
 field_name, value) -- e.g. (1975, social, twitter) in cmc_field_details or
@@ -38,7 +38,7 @@ from app.criteria.market_universe import (
 from app.chain_align import CG_SLUG_TO_INTERNAL, EXPLORER_DOMAIN_TO_CHAIN_HINT
 from app.db import SessionLocal, ensure_schema
 from app.detail_compare import _cg_links, _cmc_urls, _first
-from app.market_data.models import CgFieldDetail, CmcBinanceListed, CmcCgMapping, CmcFieldDetail, CmcTop600
+from app.market_data.models import CgFieldDetail, CmcCgMapping, CmcFieldDetail, CmcUniverse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("full_detail_pull")
@@ -47,20 +47,13 @@ PROGRESS_EVERY = 50
 
 
 def _universe(db) -> set[str]:
-    """CMC ids in the latest batch of cmc_top600 union cmc_binance_listed."""
-    universe: set[str] = set()
-
-    latest_top600_at = db.query(func.max(CmcTop600.fetched_at)).scalar()
-    if latest_top600_at:
-        universe |= {r.cmc_id for r in db.query(CmcTop600.cmc_id).filter(CmcTop600.fetched_at == latest_top600_at)}
-
-    latest_binance_at = db.query(func.max(CmcBinanceListed.fetched_at)).scalar()
-    if latest_binance_at:
-        universe |= {
-            r.cmc_id for r in db.query(CmcBinanceListed.cmc_id).filter(CmcBinanceListed.fetched_at == latest_binance_at)
-        }
-
-    return universe
+    """CMC ids in cmc_universe's latest batch (itself the union of
+    cmc_top600's and cmc_binance_listed's latest batches -- see
+    scripts.build_cmc_universe)."""
+    latest_at = db.query(func.max(CmcUniverse.fetched_at)).scalar()
+    if not latest_at:
+        return set()
+    return {r.cmc_id for r in db.query(CmcUniverse.cmc_id).filter(CmcUniverse.fetched_at == latest_at)}
 
 
 def _as_text(value) -> str | None:
@@ -218,7 +211,7 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
         else:
             cmc_ids = sorted(_universe(db))
             if not cmc_ids:
-                log.warning("cmc_top600 and cmc_binance_listed are both empty -- run those scripts first.")
+                log.warning("cmc_universe is empty -- run pull_top600, pull_binance_listed, and build_cmc_universe first.")
                 return
             if limit:
                 cmc_ids = cmc_ids[:limit]

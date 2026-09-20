@@ -192,14 +192,17 @@ Both `pull_top600` and `pull_binance_listed` run daily via a dedicated Railway c
 continuously — Railway only starts its container at the scheduled tick,
 not on deploy. The `/market-data` dashboard page always shows the latest
 batch, with a "last fetched" timestamp per tab.
-- `python -m scripts.full_detail_pull [--limit N]` — for the union of the
-  two tables above, resolves each coin's CoinGecko id via `cmc_cg_mapping`
-  (only `valid=True` rows are trusted), pulls full CMC + CoinGecko detail
-  (the same website/twitter/telegram/reddit/whitepaper fields used for
-  gap-checking, plus each side's complete raw API response) into
-  `coin_details`. CMC detail is fetched in bulk; CoinGecko has no bulk
-  detail endpoint, so that side is one call per coin and is the slow part
-  of a full run — use `--limit` while testing.
+- `python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]` — for
+  every coin in `cmc_universe`'s latest batch that has a resolved
+  (`valid=True`) CoinGecko id via `cmc_cg_mapping`, pulls full CMC +
+  CoinGecko detail into `cmc_field_details`/`cg_field_details` (long/
+  normalized, one row per field — social, market_data, tags, contract,
+  explorer). Neither side has a bulk detail endpoint for this — CMC's
+  public detail API and CoinGecko's `/coins/{id}` are both one request
+  per coin, paced with retry-with-backoff; CoinGecko's free tier is the
+  slow part in practice (see `COINGECKO_API_KEY` below, which raises the
+  limit substantially). Use `--cmc-id` for a single coin while testing,
+  or `--limit` to cap a run to the first N coins in the universe.
 
 - `python -m scripts.build_field_contrast [--cmc-id ID]` — for every coin
   with a valid mapping and existing `cmc_field_details`/`cg_field_details`
@@ -227,9 +230,10 @@ batch, with a "last fetched" timestamp per tab.
   contract address is.
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
-→ `full_detail_pull` → `build_field_contrast`. `build_cmc_universe` only
-needs `pull_top600`/`pull_binance_listed` to have run -- it's independent
-of the rest of the chain.
+→ `build_cmc_universe` → `full_detail_pull` → `build_field_contrast`.
+`full_detail_pull` reads its coin list from `cmc_universe`'s latest
+batch, so `build_cmc_universe` must run before it now (it used to read
+`cmc_top600`/`cmc_binance_listed` directly).
 
 ## Other standalone scripts
 

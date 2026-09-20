@@ -8,7 +8,7 @@ wired into the live alerting worker.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -79,38 +79,22 @@ class CmcBinanceListed(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
-class CoinDetail(Base):
-    """Full CMC + CoinGecko detail pulled for a coin (scripts/full_detail_pull.py),
-    using the same 9-field social diff + per-chain contract/explorer gap
-    logic as the live alerting worker (app/detail_compare.py), so this
-    reference table stays consistent with what actually drives Gap
-    creation. One row per coin, replaced on each pull (a snapshot, not a
-    history -- a full run touches every tracked coin and is comparatively
-    slow, so unlike cmc_top600/cmc_binance_listed this isn't append-only)."""
+class CoinFieldDetail(Base):
+    """Per-field CMC vs CoinGecko comparison (scripts/full_detail_pull.py):
+    one row per (cg_id, field_type, field_name), e.g. (bitcoin, social,
+    twitter) or (bitcoin, contract, ethereum) -- long/normalized so a plain
+    SQL WHERE can filter/sort by field without unpacking JSON. Only coins
+    with a resolved (valid=True) CoinGecko id get rows here. Snapshot: all
+    of one cg_id's rows are replaced together on each pull, not a history."""
 
-    __tablename__ = "coin_details"
+    __tablename__ = "coin_field_details"
+    __table_args__ = (Index("ix_coin_field_details_cg_id_type_name", "cg_id", "field_type", "field_name"),)
 
-    cmc_id: Mapped[str] = mapped_column(String(32), primary_key=True)
-    cg_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
-    symbol: Mapped[str] = mapped_column(String(32), index=True)
-    name: Mapped[str] = mapped_column(String(256))
-    in_top600: Mapped[bool] = mapped_column(Boolean, default=False)
-    on_binance_spot: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    # {field_key: {label, cmc_value, cg_value, differs}} for the 9 social
-    # fields -- app.detail_compare.social_diffs()'s output verbatim.
-    social_diffs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # {chain_key: {"contract_missing": bool, "explorer_missing": bool}} --
-    # derived from app.detail_compare.field_checklist()'s contract:/explorer:
-    # entries, one entry per chain either side has a contract/explorer for.
-    chain_gaps: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # Count of True entries across social_diffs + chain_gaps, for sorting
-    # /filtering without unpacking the JSON columns.
-    gap_count: Mapped[int] = mapped_column(Integer, default=0, index=True)
-
-    cmc_raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    cmc_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    cg_raw: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    cg_error: Mapped[str | None] = mapped_column(Text, nullable=True)
-
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cg_id: Mapped[str] = mapped_column(String(256), index=True)
+    field_type: Mapped[str] = mapped_column(String(16))  # "social" | "contract" | "explorer"
+    field_name: Mapped[str] = mapped_column(String(64))  # e.g. "website", "twitter"; chain slug for contract/explorer
+    cmc_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cg_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    differs: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

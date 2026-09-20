@@ -53,7 +53,9 @@
       "mcp__Railway__update-function-source-code",
       "mcp__Railway__update-service",
       "mcp__Railway__update-volume",
-      "mcp__Railway__whoami"
+      "mcp__Railway__whoami",
+      "Bash(export RAILWAY_API_TOKEN=*)",
+      "Bash(railway *)"
     ]
   }
 }

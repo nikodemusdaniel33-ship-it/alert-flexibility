@@ -66,11 +66,15 @@ def _universe(db) -> set[str]:
 def _as_text(value) -> str | None:
     """A field value is usually a plain string, but github's is
     list-valued (a coin can have several repos) -- render that as a
-    comma-joined string instead of Python's list repr."""
-    if not value:
+    comma-joined string instead of Python's list repr. Only None/empty
+    counts as absent -- a legitimate 0 (e.g. 0% price change) must not
+    collapse to None the way a bare `not value` check would."""
+    if value is None:
         return None
     if isinstance(value, list):
         return ", ".join(str(v) for v in value if v) or None
+    if isinstance(value, str) and not value:
+        return None
     return str(value)
 
 
@@ -104,11 +108,68 @@ def _cg_social_values(raw_cg: dict) -> dict[str, object]:
     }
 
 
+# CMC's public detail API has no self-reported-circulating-supply field
+# (only a self-reported *market cap*, which is a different number) and
+# CoinGecko has no such concept at all -- this stays null on both sides
+# until/unless a source for it turns up.
+_SELF_REPORTED_CIRC_SUPPLY_UNAVAILABLE = None
+
+
+def _cmc_market_values(raw_cmc: dict) -> dict[str, object]:
+    stats = raw_cmc.get("statistics") or {}
+    return {
+        "current_price": stats.get("price"),
+        "price_change_24h": stats.get("priceChangePercentage24h"),
+        "market_cap": stats.get("marketCap"),
+        "volume_24h": raw_cmc.get("volume"),
+        "circulating_supply": stats.get("circulatingSupply"),
+        "self_reported_circulating_supply": _SELF_REPORTED_CIRC_SUPPLY_UNAVAILABLE,
+        "total_supply": stats.get("totalSupply"),
+        "max_supply": stats.get("maxSupply"),
+    }
+
+
+def _cg_market_values(raw_cg: dict) -> dict[str, object]:
+    md = raw_cg.get("market_data") or {}
+
+    def usd(key):
+        v = md.get(key)
+        return v.get("usd") if isinstance(v, dict) else v
+
+    return {
+        "current_price": usd("current_price"),
+        "price_change_24h": usd("price_change_percentage_24h"),
+        "market_cap": usd("market_cap"),
+        "volume_24h": usd("total_volume"),
+        "circulating_supply": md.get("circulating_supply"),
+        "self_reported_circulating_supply": _SELF_REPORTED_CIRC_SUPPLY_UNAVAILABLE,
+        "total_supply": md.get("total_supply"),
+        "max_supply": md.get("max_supply"),
+    }
+
+
+def _cmc_tags(raw_cmc: dict) -> str | None:
+    names = [t.get("name") for t in raw_cmc.get("tags") or [] if isinstance(t, dict) and t.get("name")]
+    return ", ".join(names) or None
+
+
+def _cg_tags(raw_cg: dict) -> str | None:
+    return ", ".join(c for c in raw_cg.get("categories") or [] if c) or None
+
+
 def _cmc_rows(cmc_id: str, raw_cmc: dict, pulled_at) -> list[CmcFieldDetail]:
     rows = [
         CmcFieldDetail(cmc_id=cmc_id, field_type="social", field_name=name, value=_as_text(value), pulled_at=pulled_at)
         for name, value in _cmc_social_values(raw_cmc).items()
     ]
+    rows.extend(
+        CmcFieldDetail(cmc_id=cmc_id, field_type="market_data", field_name=name, value=_as_text(value), pulled_at=pulled_at)
+        for name, value in _cmc_market_values(raw_cmc).items()
+    )
+    tags = _cmc_tags(raw_cmc)
+    if tags:
+        rows.append(CmcFieldDetail(cmc_id=cmc_id, field_type="tags", field_name="tags", value=tags, pulled_at=pulled_at))
+
     for p in raw_cmc.get("platforms") or []:
         name = (p.get("contractPlatform") or "").strip()
         slug = mu.CMC_DETAIL_PLATFORM_NAME_TO_SLUG.get(name.lower()) or f"cmc-{name.lower()}"
@@ -124,6 +185,14 @@ def _cg_rows(cg_id: str, raw_cg: dict, pulled_at) -> list[CgFieldDetail]:
         CgFieldDetail(cg_id=cg_id, field_type="social", field_name=name, value=_as_text(value), pulled_at=pulled_at)
         for name, value in _cg_social_values(raw_cg).items()
     ]
+    rows.extend(
+        CgFieldDetail(cg_id=cg_id, field_type="market_data", field_name=name, value=_as_text(value), pulled_at=pulled_at)
+        for name, value in _cg_market_values(raw_cg).items()
+    )
+    tags = _cg_tags(raw_cg)
+    if tags:
+        rows.append(CgFieldDetail(cg_id=cg_id, field_type="tags", field_name="tags", value=tags, pulled_at=pulled_at))
+
     for cg_slug, address in (raw_cg.get("platforms") or {}).items():
         if not cg_slug or not address:
             continue
@@ -173,7 +242,7 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
                 continue
 
             try:
-                raw_cg = fetch_cg_detail_raw(cg_id, market_data=False, community_data=True)
+                raw_cg = fetch_cg_detail_raw(cg_id, market_data=True, community_data=True)
             except requests.RequestException as exc:
                 log.warning("skipping cmc_id=%s (cg_id=%s): CoinGecko fetch failed (%s)", cid, cg_id, exc)
                 if i < len(targets):

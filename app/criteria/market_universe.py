@@ -97,6 +97,22 @@ AMBIGUOUS_MARKET_CAP_CONFIDENCE_RATIO = 5
 
 BINANCE_SLUG = "binance"
 
+
+def cmc_currency_url(slug: str | None) -> str | None:
+    """CMC's own catalog page for a coin, given its slug. Verified live
+    (HTTP 200) against this exact `/currencies/{slug}/` form -- CMC's
+    bare `/{slug}/` (no `/currencies/`) 404s."""
+    return f"https://coinmarketcap.com/currencies/{slug}/" if slug else None
+
+
+def cg_currency_url(cg_id: str | None) -> str | None:
+    """CoinGecko's own catalog page for a coin, given its id. Same
+    `/en/coins/{id}` form CoinGecko's own site links to internally --
+    unlike CMC's page above, this couldn't be verified with a live
+    request from this environment (coingecko.com's site, as opposed to
+    its api.* subdomain, 403s any request here, valid id or not)."""
+    return f"https://www.coingecko.com/en/coins/{cg_id}" if cg_id else None
+
 # CMC's `platform.slug` -> CoinGecko's platform/chain key. The two APIs
 # name chains differently; only chains listed here get contract-based
 # matching; everything else falls back to symbol matching. Extend as
@@ -215,6 +231,7 @@ def fetch_cmc_universe(limit: int) -> list[dict]:
                     "id": c["id"],
                     "name": c["name"],
                     "symbol": c["symbol"],
+                    "slug": c.get("slug"),
                     "cmc_rank": c.get("cmcRank"),
                     "platform": c.get("platform"),
                 }

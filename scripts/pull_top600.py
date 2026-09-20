@@ -39,6 +39,7 @@ def run(top_n: int | None = None) -> None:
                     cmc_id=str(coin["id"]),
                     name=coin["name"],
                     symbol=coin["symbol"],
+                    slug=coin.get("slug"),
                     cmc_rank=coin["cmc_rank"],
                     fetched_at=batch_time,
                 )

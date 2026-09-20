@@ -15,11 +15,14 @@ to fix.
 
 Long/normalized, one table per source: each row is (id, field_type,
 field_name, value) -- e.g. (1975, social, twitter) in cmc_field_details or
-(chainlink, social, twitter) in cg_field_details. Comparing the two (which
-field differs for a given coin) is left to a join via cmc_cg_mapping at
-query time rather than precomputed and stored -- see app.detail_compare
-for the same field-by-field comparison used by the live alerting worker,
-which still computes and stores diffs directly against tracked Projects.
+(chainlink, social, twitter) in cg_field_details. Every row also carries
+project_name/project_url (that coin's name and its catalog page on this
+row's own source), denormalized so either table is browsable on its own
+without a join. Comparing the two (which field differs for a given coin)
+is left to a join via cmc_cg_mapping at query time rather than
+precomputed and stored -- see app.detail_compare for the same
+field-by-field comparison used by the live alerting worker, which still
+computes and stores diffs directly against tracked Projects.
 
 Uses the same key-free raw-detail fetches as the live worker
 (app.criteria.market_universe.fetch_cmc_detail_raw/fetch_cg_detail_raw).
@@ -33,6 +36,12 @@ substantially). Use --cmc-id to pull a single coin while testing, or
 Snapshot, not incremental: every run replaces each target coin's rows
 outright (delete then insert), whether or not that coin already had rows
 from a previous run.
+
+A fetch failure -- CMC or CoinGecko -- is recorded in detail_pull_failures
+(source, cmc_id, reason) instead of only logged, since this job runs long
+enough that its own run logs have proven unreliable to rely on after the
+fact (see README). That table tracks CURRENTLY outstanding failures only:
+a coin's row there is cleared the moment its fetch succeeds again.
 """
 
 import argparse
@@ -51,7 +60,7 @@ from app.criteria.market_universe import (
 from app.chain_align import CG_SLUG_TO_INTERNAL, EXPLORER_DOMAIN_TO_CHAIN_HINT
 from app.db import SessionLocal, ensure_schema
 from app.detail_compare import _cg_links, _cmc_urls, _first
-from app.market_data.models import CgFieldDetail, CmcCgMapping, CmcFieldDetail, CmcUniverse
+from app.market_data.models import CgFieldDetail, CmcCgMapping, CmcFieldDetail, CmcUniverse, DetailPullFailure
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("full_detail_pull")
@@ -82,17 +91,14 @@ def _as_text(value) -> str | None:
     return str(value)
 
 
-def _cmc_url(raw_cmc: dict) -> str | None:
-    slug = raw_cmc.get("slug")
-    return f"https://coinmarketcap.com/currencies/{slug}/" if slug else None
-
-
 def _cmc_social_values(raw_cmc: dict) -> dict[str, object]:
     # cmc_url has no CoinGecko counterpart (there's nothing to compare it
     # against -- it's CMC's own catalog page for the coin) and is
     # deliberately left out of build_field_contrast.SOCIAL_FIELDS, so it
     # never reaches coin_field_contrast/gap_details. It's here purely as a
-    # convenience reference field on cmc_field_details itself.
+    # convenience reference field on cmc_field_details itself -- distinct
+    # from the project_url column (see _cmc_rows), which denormalizes the
+    # same URL onto every row rather than just the social ones.
     urls = _cmc_urls(raw_cmc)
     return {
         "website": _first(urls.get("website")),
@@ -104,7 +110,7 @@ def _cmc_social_values(raw_cmc: dict) -> dict[str, object]:
         "blog": _first(urls.get("announcement")),
         "facebook": _first(urls.get("facebook")),
         "github": urls.get("source_code"),
-        "cmc_url": _cmc_url(raw_cmc),
+        "cmc_url": mu.cmc_currency_url(raw_cmc.get("slug")),
     }
 
 
@@ -164,14 +170,22 @@ def _cg_market_values(raw_cg: dict) -> dict[str, object]:
 
 
 def _cmc_rows(cmc_id: str, raw_cmc: dict, pulled_at) -> list[CmcFieldDetail]:
-    rows = [
-        CmcFieldDetail(cmc_id=cmc_id, field_type="social", field_name=name, value=_as_text(value), pulled_at=pulled_at)
-        for name, value in _cmc_social_values(raw_cmc).items()
-    ]
-    rows.extend(
-        CmcFieldDetail(cmc_id=cmc_id, field_type="market_data", field_name=name, value=_as_text(value), pulled_at=pulled_at)
-        for name, value in _cmc_market_values(raw_cmc).items()
-    )
+    project_name = raw_cmc.get("name")
+    project_url = mu.cmc_currency_url(raw_cmc.get("slug"))
+
+    def row(field_type: str, field_name: str, value) -> CmcFieldDetail:
+        return CmcFieldDetail(
+            cmc_id=cmc_id,
+            field_type=field_type,
+            field_name=field_name,
+            value=_as_text(value),
+            project_name=project_name,
+            project_url=project_url,
+            pulled_at=pulled_at,
+        )
+
+    rows = [row("social", name, value) for name, value in _cmc_social_values(raw_cmc).items()]
+    rows.extend(row("market_data", name, value) for name, value in _cmc_market_values(raw_cmc).items())
     for t in raw_cmc.get("tags") or []:
         if not isinstance(t, dict):
             continue
@@ -179,36 +193,44 @@ def _cmc_rows(cmc_id: str, raw_cmc: dict, pulled_at) -> list[CmcFieldDetail]:
         if not name:
             continue
         slug = t.get("slug") or name
-        rows.append(CmcFieldDetail(cmc_id=cmc_id, field_type="tags", field_name=slug, value=name, pulled_at=pulled_at))
+        rows.append(row("tags", slug, name))
 
     for p in raw_cmc.get("platforms") or []:
         name = (p.get("contractPlatform") or "").strip()
         slug = mu.CMC_DETAIL_PLATFORM_NAME_TO_SLUG.get(name.lower()) or f"cmc-{name.lower()}"
         if p.get("contractAddress"):
-            rows.append(CmcFieldDetail(cmc_id=cmc_id, field_type="contract", field_name=slug, value=p["contractAddress"], pulled_at=pulled_at))
+            rows.append(row("contract", slug, p["contractAddress"]))
         if p.get("contractExplorerUrl"):
-            rows.append(CmcFieldDetail(cmc_id=cmc_id, field_type="explorer", field_name=slug, value=p["contractExplorerUrl"], pulled_at=pulled_at))
+            rows.append(row("explorer", slug, p["contractExplorerUrl"]))
     return rows
 
 
 def _cg_rows(cg_id: str, raw_cg: dict, pulled_at) -> list[CgFieldDetail]:
-    rows = [
-        CgFieldDetail(cg_id=cg_id, field_type="social", field_name=name, value=_as_text(value), pulled_at=pulled_at)
-        for name, value in _cg_social_values(raw_cg).items()
-    ]
-    rows.extend(
-        CgFieldDetail(cg_id=cg_id, field_type="market_data", field_name=name, value=_as_text(value), pulled_at=pulled_at)
-        for name, value in _cg_market_values(raw_cg).items()
-    )
+    project_name = raw_cg.get("name")
+    project_url = mu.cg_currency_url(cg_id)
+
+    def row(field_type: str, field_name: str, value) -> CgFieldDetail:
+        return CgFieldDetail(
+            cg_id=cg_id,
+            field_type=field_type,
+            field_name=field_name,
+            value=_as_text(value),
+            project_name=project_name,
+            project_url=project_url,
+            pulled_at=pulled_at,
+        )
+
+    rows = [row("social", name, value) for name, value in _cg_social_values(raw_cg).items()]
+    rows.extend(row("market_data", name, value) for name, value in _cg_market_values(raw_cg).items())
     for category in raw_cg.get("categories") or []:
         if category:
-            rows.append(CgFieldDetail(cg_id=cg_id, field_type="tags", field_name=category, value=category, pulled_at=pulled_at))
+            rows.append(row("tags", category, category))
 
     for cg_slug, address in (raw_cg.get("platforms") or {}).items():
         if not cg_slug or not address:
             continue
         slug = CG_SLUG_TO_INTERNAL.get(cg_slug, cg_slug)
-        rows.append(CgFieldDetail(cg_id=cg_id, field_type="contract", field_name=slug, value=address, pulled_at=pulled_at))
+        rows.append(row("contract", slug, address))
 
     explorers_by_chain: dict[str, list[str]] = {}
     for url in (raw_cg.get("links") or {}).get("blockchain_site") or []:
@@ -219,9 +241,18 @@ def _cg_rows(cg_id: str, raw_cg: dict, pulled_at) -> list[CgFieldDetail]:
         if hint:
             explorers_by_chain.setdefault(hint, []).append(url)
     for slug, urls in explorers_by_chain.items():
-        rows.append(CgFieldDetail(cg_id=cg_id, field_type="explorer", field_name=slug, value=", ".join(urls), pulled_at=pulled_at))
+        rows.append(row("explorer", slug, ", ".join(urls)))
 
     return rows
+
+
+def _record_failure(db, source: str, cmc_id: str, cg_id: str | None, reason: str) -> None:
+    db.query(DetailPullFailure).filter(DetailPullFailure.source == source, DetailPullFailure.cmc_id == cmc_id).delete(synchronize_session=False)
+    db.add(DetailPullFailure(source=source, cmc_id=cmc_id, cg_id=cg_id, reason=reason, failed_at=datetime.now(timezone.utc)))
+
+
+def _clear_failure(db, source: str, cmc_id: str) -> None:
+    db.query(DetailPullFailure).filter(DetailPullFailure.source == source, DetailPullFailure.cmc_id == cmc_id).delete(synchronize_session=False)
 
 
 def run(limit: int | None = None, cmc_id: str | None = None) -> None:
@@ -257,10 +288,12 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
                 raw_cmc = fetch_cmc_detail_raw(int(cid))
             except (requests.RequestException, ValueError, KeyError) as exc:
                 log.warning("skipping cmc_id=%s: CMC fetch failed (%s)", cid, exc)
+                _record_failure(db, "cmc", cid, None, str(exc))
                 if i < len(targets):
                     time.sleep(CMC_DETAIL_REQUEST_DELAY_SECONDS)
                 continue
 
+            _clear_failure(db, "cmc", cid)
             pulled_at = datetime.now(timezone.utc)
             db.query(CmcFieldDetail).filter(CmcFieldDetail.cmc_id == cid).delete(synchronize_session=False)
             db.add_all(_cmc_rows(cid, raw_cmc, pulled_at))
@@ -270,7 +303,9 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
                     raw_cg = fetch_cg_detail_raw(cg_id, market_data=True, community_data=True)
                 except requests.RequestException as exc:
                     log.warning("cmc_id=%s: CoinGecko fetch failed (%s) -- CMC side saved, CG side left as-is", cid, exc)
+                    _record_failure(db, "cg", cid, cg_id, str(exc))
                 else:
+                    _clear_failure(db, "cg", cid)
                     db.query(CgFieldDetail).filter(CgFieldDetail.cg_id == cg_id).delete(synchronize_session=False)
                     db.add_all(_cg_rows(cg_id, raw_cg, pulled_at))
 

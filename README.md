@@ -151,7 +151,8 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 
 - `app/market_data/models.py` — `cmc_cg_mapping`, `cmc_top600`,
   `cmc_binance_listed`, `cmc_universe`, `cmc_field_details`,
-  `cg_field_details`, `coin_field_contrast`, `gap_details`.
+  `cg_field_details`, `coin_field_contrast`, `gap_details`,
+  `detail_pull_failures`.
 - `data/cmc_cg_mapping.csv` (+ `data/cmc_cg_unmatched.csv`) — a
   human-reviewed CMC↔CoinGecko mapping export. Its `valid` column marks
   confidently-matched rows (contract address or a unique symbol) versus
@@ -160,28 +161,33 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 - `python -m scripts.import_cmc_cg_mapping` — loads that CSV into
   `cmc_cg_mapping` (upsert by `cmc_id`; safe to re-run).
 - `python -m scripts.pull_top600 [--top-n 600]` — snapshots the current
-  top-N CMC coins by market cap into `cmc_top600`. **Append-only**: each
+  top-N CMC coins by market cap into `cmc_top600`, including each coin's
+  `slug` (CMC's own URL slug, carried through purely so `build_cmc_universe`
+  can derive `cmc_url` below with no extra API call). **Append-only**: each
   run inserts a new batch of rows sharing one `fetched_at` timestamp
   rather than replacing the table, so history is kept. Readers wanting
   the current snapshot filter to `MAX(fetched_at)` (see `/market-data`
   in `app/main.py`).
 - `python -m scripts.pull_binance_listed` — snapshots CMC-listed coins
-  currently tradeable on Binance into `cmc_binance_listed`, same
-  append-only convention. Unions spot, perpetual, and futures market
-  pairs, deduplicated by `cmc_id` (a coin listed under more than one
-  category still gets exactly one row, with `is_spot`/`is_perpetual`/
-  `is_futures` flagging which) — broader on purpose than
-  `MarketUniverseProvider`'s live auto-tracking criteria above, which
-  stays spot-only (Binance's perpetual listings include tokenized-stock
-  contracts like AAPL/ADBE alongside crypto, not something to
-  auto-track/alert on). Reuses names from `cmc_top600`'s *latest* batch
-  where possible; run `pull_top600` first for fewer API calls.
+  currently tradeable on Binance into `cmc_binance_listed` (`slug`
+  included, same reason as above), same append-only convention. Unions
+  spot, perpetual, and futures market pairs, deduplicated by `cmc_id` (a
+  coin listed under more than one category still gets exactly one row,
+  with `is_spot`/`is_perpetual`/`is_futures` flagging which) — broader on
+  purpose than `MarketUniverseProvider`'s live auto-tracking criteria
+  above, which stays spot-only (Binance's perpetual listings include
+  tokenized-stock contracts like AAPL/ADBE alongside crypto, not
+  something to auto-track/alert on). Reuses names from `cmc_top600`'s
+  *latest* batch where possible; run `pull_top600` first for fewer API
+  calls.
 - `python -m scripts.build_cmc_universe` — unions `cmc_top600`'s and
   `cmc_binance_listed`'s latest batches into `cmc_universe`: one row per
   CMC id tracked by either source, with `in_top600`/`on_binance` flags
   saying why (`on_binance` is true under any of spot/perpetual/futures —
   see `cmc_binance_listed`'s own `is_spot`/`is_perpetual`/`is_futures`
-  for the per-category breakdown). Reads those two tables only, no CMC API calls of its
+  for the per-category breakdown), plus `cmc_url` (CMC's own catalog page
+  for the coin, derived from whichever source's `slug` is available —
+  not fetched). Reads those two tables only, no CMC API calls of its
   own; run after both. **Replace semantics**, same as `cmc_field_details`/
   `cg_field_details`/`coin_field_contrast`/`gap_details`: every run
   recomputes the full universe and replaces the table's contents, so it
@@ -202,17 +208,26 @@ batch, with a "last fetched" timestamp per tab.
   additionally pulls CoinGecko detail into `cg_field_details` for coins
   that have a resolved (`valid=True`) CoinGecko id via `cmc_cg_mapping`
   — long/normalized, one row per field (social, market_data, tags,
-  contract, explorer). `cmc_field_details`'s `social` rows also include
-  `cmc_url` (CMC's own catalog page for the coin), deliberately excluded
-  from `coin_field_contrast`/`gap_details` since there's no CoinGecko
-  counterpart to compare it against. Neither side has a bulk detail
-  endpoint for this — CMC's public detail API and CoinGecko's
-  `/coins/{id}` are both one request per coin, paced with
+  contract, explorer). Every row in both tables also carries
+  `project_name`/`project_url` (that coin's name and its catalog page on
+  this row's own source), denormalized so either table is browsable on
+  its own without a join back to `cmc_universe`/`cmc_cg_mapping`.
+  `cmc_field_details`'s `social` rows separately still include a
+  `cmc_url` field (same URL, row form rather than column form) —
+  deliberately excluded from `coin_field_contrast`/`gap_details` since
+  there's no CoinGecko counterpart to compare it against. Neither side
+  has a bulk detail endpoint for this — CMC's public detail API and
+  CoinGecko's `/coins/{id}` are both one request per coin, paced with
   retry-with-backoff; CoinGecko's free tier is the slow part in practice
   (see `COINGECKO_API_KEY` below, which raises the limit substantially).
   Every run replaces each target coin's rows outright — not
   incremental. Use `--cmc-id` for a single coin while testing,
-  or `--limit` to cap a run to the first N coins in the universe.
+  or `--limit` to cap a run to the first N coins in the universe. A fetch
+  failure (either side) is recorded in `detail_pull_failures`
+  (`source` = `cmc`/`cg`, `cmc_id`, `reason`) rather than only logged,
+  since this job runs long enough that its own run logs have proven
+  unreliable after the fact — that table tracks currently outstanding
+  failures only, cleared the moment a coin's fetch succeeds again.
 
 - `python -m scripts.build_field_contrast [--cmc-id ID]` — for every coin
   with a valid mapping and existing `cmc_field_details`/`cg_field_details`

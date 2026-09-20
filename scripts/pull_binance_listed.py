@@ -61,11 +61,13 @@ def run() -> None:
                 detail = info.get(cid)
                 name = detail["name"] if detail else meta.get("slug")
                 rank = None
+            slug = (top.slug if top else None) or meta.get("slug")
             db.add(
                 CmcBinanceListed(
                     cmc_id=cid_str,
                     name=name,
                     symbol=meta["symbol"],
+                    slug=slug,
                     cmc_rank=rank,
                     is_spot=meta["is_spot"],
                     is_perpetual=meta["is_perpetual"],

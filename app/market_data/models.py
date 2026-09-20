@@ -48,7 +48,11 @@ class CmcTop600(Base):
     """Top-N CMC coins by market cap (tab 1), one batch of rows per run of
     scripts/pull_top600.py (all rows in a batch share the same fetched_at).
     Append-only history -- callers wanting the current snapshot must filter
-    to the latest fetched_at themselves (see app.main's /market-data)."""
+    to the latest fetched_at themselves (see app.main's /market-data).
+    `slug` is CMC's own per-coin URL slug, carried through from the listing
+    API response purely so scripts.build_cmc_universe can derive cmc_url
+    without an API call of its own; rows from before this column existed
+    have it NULL until their next pull_top600 run."""
 
     __tablename__ = "cmc_top600"
     __table_args__ = (Index("ix_cmc_top600_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
@@ -57,6 +61,7 @@ class CmcTop600(Base):
     cmc_id: Mapped[str] = mapped_column(String(32), index=True)
     name: Mapped[str] = mapped_column(String(256))
     symbol: Mapped[str] = mapped_column(String(32), index=True)
+    slug: Mapped[str | None] = mapped_column(String(256), nullable=True)
     cmc_rank: Mapped[int] = mapped_column(Integer)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
@@ -73,7 +78,11 @@ class CmcBinanceListed(Base):
     breakdown wasn't tracked yet, not "found nowhere". One batch of rows
     per run of scripts/pull_binance_listed.py (all rows in a batch share
     the same fetched_at). Append-only history, same latest-batch
-    convention as CmcTop600."""
+    convention as CmcTop600. `slug` is CMC's own per-coin URL slug (also
+    carried through for scripts.build_cmc_universe's cmc_url, same as
+    CmcTop600's) -- CMC's market-pairs API already returns it, so this
+    costs no extra call either; rows from before this column existed have
+    it NULL until their next pull_binance_listed run."""
 
     __tablename__ = "cmc_binance_listed"
     __table_args__ = (Index("ix_cmc_binance_listed_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
@@ -82,6 +91,7 @@ class CmcBinanceListed(Base):
     cmc_id: Mapped[str] = mapped_column(String(32), index=True)
     name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
+    slug: Mapped[str | None] = mapped_column(String(256), nullable=True)
     cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_spot: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     is_perpetual: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -100,12 +110,17 @@ class CmcUniverse(Base):
     spot/perpetual/futures -- deliberately not broken out per-category
     here the way cmc_binance_listed's is_spot/is_perpetual/is_futures are
     (this table only answers "is it tracked, and via which of the two
-    top-level sources", not the finer-grained why). cmc_rank and
-    name/symbol are taken from cmc_top600 when the id is there
-    (canonical), falling back to cmc_binance_listed's copy for a
-    Binance-only id. Replace semantics, same as CoinFieldContrast/
-    GapDetail/CmcFieldDetail/CgFieldDetail: every run recomputes the full
-    universe from cmc_top600/cmc_binance_listed and replaces this table's
+    top-level sources", not the finer-grained why). cmc_rank, name/symbol,
+    and slug (used to derive cmc_url below) are taken from cmc_top600 when
+    the id is there (canonical), falling back to cmc_binance_listed's copy
+    for a Binance-only id. cmc_url is CMC's own catalog page for the coin
+    (app.criteria.market_universe.cmc_currency_url on that slug) --
+    derived here rather than fetched, so this table keeps making zero CMC
+    API calls of its own; a coin whose source row predates the slug
+    column has cmc_url NULL until cmc_top600/cmc_binance_listed re-pull
+    it. Replace semantics, same as CoinFieldContrast/GapDetail/
+    CmcFieldDetail/CgFieldDetail: every run recomputes the full universe
+    from cmc_top600/cmc_binance_listed and replaces this table's
     contents, so it always holds a single current snapshot, no history.
     fetched_at is just "when this snapshot was last built", not a batch
     key -- run after both source scripts."""
@@ -118,6 +133,7 @@ class CmcUniverse(Base):
     name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cmc_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     in_top600: Mapped[bool] = mapped_column(Boolean, default=False)
     on_binance: Mapped[bool] = mapped_column(Boolean, default=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
@@ -130,7 +146,14 @@ class CmcFieldDetail(Base):
     principle every coin in the tracked universe can have rows here
     regardless of match confidence (current pull still only runs for
     coins with a resolved CG id -- see full_detail_pull.py). Snapshot:
-    all of one cmc_id's rows are replaced together on each pull."""
+    all of one cmc_id's rows are replaced together on each pull.
+    project_name/project_url denormalize the coin's name and CMC catalog
+    page onto every row (same value repeated per cmc_id) purely so this
+    table is readable/browsable on its own without joining back to
+    cmc_universe -- distinct from the field_type="social" field_name=
+    "cmc_url" row above, which exists for the field-by-field enumeration
+    pattern that build_field_contrast/gap_details read. Rows pulled
+    before this column existed have it NULL until their coin's next pull."""
 
     __tablename__ = "cmc_field_details"
     __table_args__ = (Index("ix_cmc_field_details_cmc_id_type_name", "cmc_id", "field_type", "field_name"),)
@@ -140,6 +163,8 @@ class CmcFieldDetail(Base):
     field_type: Mapped[str] = mapped_column(String(16))  # "social" | "contract" | "explorer"
     field_name: Mapped[str] = mapped_column(String(64))  # e.g. "website", "twitter"; chain slug for contract/explorer
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    project_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    project_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
@@ -150,7 +175,13 @@ class CgFieldDetail(Base):
     resolved (valid=True) CoinGecko id get rows here -- fetching needs to
     know which CoinGecko coin to call. Snapshot, same convention as
     CmcFieldDetail. Comparing the two tables (join on cmc_cg_mapping) is
-    left to the reader/query rather than precomputed and stored."""
+    left to the reader/query rather than precomputed and stored.
+    project_name/project_url denormalize the coin's CoinGecko name and
+    catalog page onto every row, same rationale and same-value-per-cg_id
+    convention as CmcFieldDetail's -- CoinGecko has no per-field
+    equivalent of CMC's cmc_url row, so this is that side's only place to
+    find its own catalog link. Rows pulled before this column existed
+    have it NULL until their coin's next pull."""
 
     __tablename__ = "cg_field_details"
     __table_args__ = (Index("ix_cg_field_details_cg_id_type_name", "cg_id", "field_type", "field_name"),)
@@ -160,7 +191,35 @@ class CgFieldDetail(Base):
     field_type: Mapped[str] = mapped_column(String(16))
     field_name: Mapped[str] = mapped_column(String(64))
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    project_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    project_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class DetailPullFailure(Base):
+    """Durable record of scripts.full_detail_pull failures -- which
+    cmc_id's CMC-side fetch, or which cmc_id's CoinGecko-side fetch,
+    failed as of the most recent run. Exists because run logs are
+    unreliable for this job in practice (a long rate-limited run can
+    freeze mid-stream showing stale output even after the process has
+    finished -- see README), so a failure only visible in logs is
+    effectively lost. Not an append-only history: a coin that fails gets
+    its row upserted (delete-then-insert) with the latest reason; a coin
+    that succeeds on a later run has its row for that source deleted in
+    that same run -- so this table only ever shows CURRENTLY outstanding
+    failures, not every failure that ever happened. source is "cmc" or
+    "cg"; cg_id is only set for a "cg" row (a "cmc" failure means the CMC
+    fetch itself failed, before a cg_id would even matter)."""
+
+    __tablename__ = "detail_pull_failures"
+    __table_args__ = (Index("ix_detail_pull_failures_source_cmc_id", "source", "cmc_id", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(8))  # "cmc" | "cg"
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
+    cg_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    reason: Mapped[str] = mapped_column(Text)
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 
 class CoinFieldContrast(Base):

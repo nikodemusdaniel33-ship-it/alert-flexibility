@@ -6,13 +6,17 @@ scripts.pull_top600 and scripts.pull_binance_listed.
 One row per CMC id found in either source: in_top600 / on_binance flag
 which source(s) found it (on_binance is true if the id is in
 cmc_binance_listed under any of spot/perpetual/futures -- see that
-table for the per-category breakdown). name/symbol/cmc_rank are taken from
-cmc_top600 when the id is there (canonical), falling back to
-cmc_binance_listed's copy for a Binance-only id. Replace semantics, same as
-coin_field_contrast/gap_details/cmc_field_details/cg_field_details: every
-run recomputes the full universe and replaces the table's contents, so it
-always holds a single current snapshot -- no history, no batching.
-fetched_at is just "when this snapshot was last built".
+table for the per-category breakdown). name/symbol/cmc_rank/cmc_url are
+taken from cmc_top600 when the id is there (canonical), falling back to
+cmc_binance_listed's copy for a Binance-only id -- cmc_url is derived
+from whichever source's slug is available
+(app.criteria.market_universe.cmc_currency_url), not fetched, so this
+script keeps making zero CMC API calls of its own. Replace semantics,
+same as coin_field_contrast/gap_details/cmc_field_details/
+cg_field_details: every run recomputes the full universe and replaces
+the table's contents, so it always holds a single current snapshot -- no
+history, no batching. fetched_at is just "when this snapshot was last
+built".
 """
 
 import logging
@@ -20,6 +24,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import func
 
+from app.criteria.market_universe import cmc_currency_url
 from app.db import SessionLocal, ensure_schema
 from app.market_data.models import CmcBinanceListed, CmcTop600, CmcUniverse
 
@@ -50,12 +55,14 @@ def run() -> None:
         for cid in sorted(set(top600) | set(binance)):
             t, b = top600.get(cid), binance.get(cid)
             source = t or b  # prefer cmc_top600 as canonical for name/symbol/rank
+            slug = (t.slug if t else None) or (b.slug if b else None)
             rows.append(
                 CmcUniverse(
                     cmc_id=cid,
                     name=source.name,
                     symbol=source.symbol,
                     cmc_rank=t.cmc_rank if t else (b.cmc_rank if b else None),
+                    cmc_url=cmc_currency_url(slug),
                     in_top600=t is not None,
                     on_binance=b is not None,
                     fetched_at=fetched_at,

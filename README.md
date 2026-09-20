@@ -201,7 +201,8 @@ batch, with a "last fetched" timestamp per tab.
   sources don't always agree on a slug for the same address — a
   slug-only comparison produces false positives, e.g. CoinGecko's
   `bitlayer` vs CMC's unmapped `Bitlayer` falling back to `cmc-bitlayer`);
-  for `tags`, one summary row (CoinGecko's tag count) rather than
+  for `tags`, one summary row (how many more tags CoinGecko has than CMC,
+  `cg_count - cmc_count`) rather than
   per-tag, since there's no address-equivalent id to verify a
   name-similarity match against. `explorer` gaps aren't broken out here
   — URL values aren't reliably comparable across sources the way a

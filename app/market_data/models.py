@@ -168,7 +168,8 @@ class GapDetail(Base):
       - tags: no per-tag id to verify a name-similarity match against (no
         address-equivalent), so one summary row per coin instead of
         per-tag: missing_item is the literal string "tags", cg_value is
-        CoinGecko's tag count as a string.
+        how many more tags CoinGecko has than CMC (cg_count - cmc_count,
+        as a string).
     Snapshot, same replace-per-coin convention as CoinFieldContrast."""
 
     __tablename__ = "gap_details"

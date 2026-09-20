@@ -22,8 +22,9 @@ docstring), writes the specific missing item(s) to gap_details:
     anywhere in CMC's address list for this coin -- by address, not by
     chain slug (the two sources don't always agree on a slug for the
     same address; see GapDetail's docstring).
-  - tags: one summary row (CoinGecko's tag count), not per-tag -- no
-    address-equivalent id to verify a name-similarity match against.
+  - tags: one summary row (cg_count minus cmc_count -- how many more tags
+    CoinGecko has), not per-tag -- no address-equivalent id to verify a
+    name-similarity match against.
 
 Usage:
     python -m scripts.build_field_contrast               # all mapped coins with pulled field detail
@@ -115,7 +116,7 @@ def _build_rows(
                     )
         elif field_type == "tags":
             gap_rows.append(
-                GapDetail(cmc_id=cmc_id, cg_id=cg_id, field_type="tags", missing_item="tags", cg_value=str(cg_count), detected_at=now)
+                GapDetail(cmc_id=cmc_id, cg_id=cg_id, field_type="tags", missing_item="tags", cg_value=str(cg_count - cmc_count), detected_at=now)
             )
         # field_type == "explorer": no gap_details rows -- URL values aren't
         # reliably comparable across sources the way a contract address is.

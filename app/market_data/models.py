@@ -95,12 +95,13 @@ class CmcUniverse(Base):
     source. Built by reading cmc_top600's and cmc_binance_listed's latest
     batches and unioning them -- no CMC API calls of its own, no change to
     either source table or /market-data (which keeps reading them
-    directly). in_top600 / on_binance_spot flag which source(s) found this
-    id; on_binance_spot means "found in cmc_binance_listed" specifically
-    -- despite the name, that source (and so this flag) covers Binance
-    spot, perpetual, and futures market pairs, not spot alone; kept
-    as-is to avoid a schema rename on an already-populated table. cmc_rank
-    and name/symbol are taken from cmc_top600 when the id is there
+    directly). in_top600 / on_binance flag which source(s) found this id;
+    on_binance is true if the id is in cmc_binance_listed under ANY of
+    spot/perpetual/futures -- deliberately not broken out per-category
+    here the way cmc_binance_listed's is_spot/is_perpetual/is_futures are
+    (this table only answers "is it tracked, and via which of the two
+    top-level sources", not the finer-grained why). cmc_rank and
+    name/symbol are taken from cmc_top600 when the id is there
     (canonical), falling back to cmc_binance_listed's copy for a
     Binance-only id. Append-only, same latest-batch convention as
     CmcTop600/CmcBinanceListed -- run after both."""
@@ -114,7 +115,7 @@ class CmcUniverse(Base):
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
     in_top600: Mapped[bool] = mapped_column(Boolean, default=False)
-    on_binance_spot: Mapped[bool] = mapped_column(Boolean, default=False)
+    on_binance: Mapped[bool] = mapped_column(Boolean, default=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 

@@ -178,8 +178,10 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
   where possible; run `pull_top600` first for fewer API calls.
 - `python -m scripts.build_cmc_universe` — unions `cmc_top600`'s and
   `cmc_binance_listed`'s latest batches into `cmc_universe`: one row per
-  CMC id tracked by either source, with `in_top600`/`on_binance_spot`
-  flags saying why. Reads those two tables only, no CMC API calls of its
+  CMC id tracked by either source, with `in_top600`/`on_binance` flags
+  saying why (`on_binance` is true under any of spot/perpetual/futures —
+  see `cmc_binance_listed`'s own `is_spot`/`is_perpetual`/`is_futures`
+  for the per-category breakdown). Reads those two tables only, no CMC API calls of its
   own; run after both. Doesn't replace either source table or
   `/market-data` (which keeps reading `cmc_top600`/`cmc_binance_listed`
   directly) -- it's a single place to answer "is this CMC id currently

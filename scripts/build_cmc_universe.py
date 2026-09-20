@@ -3,8 +3,10 @@ latest batches (`python -m scripts.build_cmc_universe`) -- reads those two
 tables only, no CMC API calls of its own. Run after both
 scripts.pull_top600 and scripts.pull_binance_listed.
 
-One row per CMC id found in either source: in_top600 / on_binance_spot
-flag which source(s) found it. name/symbol/cmc_rank are taken from
+One row per CMC id found in either source: in_top600 / on_binance flag
+which source(s) found it (on_binance is true if the id is in
+cmc_binance_listed under any of spot/perpetual/futures -- see that
+table for the per-category breakdown). name/symbol/cmc_rank are taken from
 cmc_top600 when the id is there (canonical), falling back to
 cmc_binance_listed's copy for a Binance-only id. Append-only, same
 latest-batch convention as the two source tables -- readers wanting the
@@ -53,7 +55,7 @@ def run() -> None:
                     symbol=source.symbol,
                     cmc_rank=t.cmc_rank if t else (b.cmc_rank if b else None),
                     in_top600=t is not None,
-                    on_binance_spot=b is not None,
+                    on_binance=b is not None,
                     fetched_at=fetched_at,
                 )
             )

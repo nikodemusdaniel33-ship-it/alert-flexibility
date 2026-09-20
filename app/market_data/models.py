@@ -103,8 +103,12 @@ class CmcUniverse(Base):
     top-level sources", not the finer-grained why). cmc_rank and
     name/symbol are taken from cmc_top600 when the id is there
     (canonical), falling back to cmc_binance_listed's copy for a
-    Binance-only id. Append-only, same latest-batch convention as
-    CmcTop600/CmcBinanceListed -- run after both."""
+    Binance-only id. Replace semantics, same as CoinFieldContrast/
+    GapDetail/CmcFieldDetail/CgFieldDetail: every run recomputes the full
+    universe from cmc_top600/cmc_binance_listed and replaces this table's
+    contents, so it always holds a single current snapshot, no history.
+    fetched_at is just "when this snapshot was last built", not a batch
+    key -- run after both source scripts."""
 
     __tablename__ = "cmc_universe"
     __table_args__ = (Index("ix_cmc_universe_fetched_at_cmc_id", "fetched_at", "cmc_id"),)

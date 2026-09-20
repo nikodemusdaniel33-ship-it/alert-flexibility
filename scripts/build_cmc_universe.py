@@ -8,9 +8,11 @@ which source(s) found it (on_binance is true if the id is in
 cmc_binance_listed under any of spot/perpetual/futures -- see that
 table for the per-category breakdown). name/symbol/cmc_rank are taken from
 cmc_top600 when the id is there (canonical), falling back to
-cmc_binance_listed's copy for a Binance-only id. Append-only, same
-latest-batch convention as the two source tables -- readers wanting the
-current snapshot filter to MAX(fetched_at).
+cmc_binance_listed's copy for a Binance-only id. Replace semantics, same as
+coin_field_contrast/gap_details/cmc_field_details/cg_field_details: every
+run recomputes the full universe and replaces the table's contents, so it
+always holds a single current snapshot -- no history, no batching.
+fetched_at is just "when this snapshot was last built".
 """
 
 import logging
@@ -60,10 +62,11 @@ def run() -> None:
                 )
             )
 
+        db.query(CmcUniverse).delete()
         db.add_all(rows)
         db.commit()
         log.info(
-            "cmc_universe: %d coins (%d top600, %d binance, %d overlap) (batch %s)",
+            "cmc_universe: %d coins (%d top600, %d binance, %d overlap) (snapshot %s)",
             len(rows),
             len(top600),
             len(binance),

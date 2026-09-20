@@ -1,5 +1,5 @@
 """Pull raw CMC and CoinGecko field values for coins in cmc_universe's
-latest batch into two separate tables -- cmc_field_details and
+current snapshot into two separate tables -- cmc_field_details and
 cg_field_details (`python -m scripts.full_detail_pull [--limit N]
 [--cmc-id ID]`).
 
@@ -41,7 +41,6 @@ import time
 from datetime import datetime, timezone
 
 import requests
-from sqlalchemy import func
 
 from app.criteria import market_universe as mu
 from app.criteria.market_universe import (
@@ -61,13 +60,11 @@ PROGRESS_EVERY = 50
 
 
 def _universe(db) -> set[str]:
-    """CMC ids in cmc_universe's latest batch (itself the union of
-    cmc_top600's and cmc_binance_listed's latest batches -- see
-    scripts.build_cmc_universe)."""
-    latest_at = db.query(func.max(CmcUniverse.fetched_at)).scalar()
-    if not latest_at:
-        return set()
-    return {r.cmc_id for r in db.query(CmcUniverse.cmc_id).filter(CmcUniverse.fetched_at == latest_at)}
+    """CMC ids currently in cmc_universe (itself the union of cmc_top600's
+    and cmc_binance_listed's latest batches -- see
+    scripts.build_cmc_universe). cmc_universe holds a single current
+    snapshot (replace semantics), so this is just every row in it."""
+    return {r.cmc_id for r in db.query(CmcUniverse.cmc_id)}
 
 
 def _as_text(value) -> str | None:

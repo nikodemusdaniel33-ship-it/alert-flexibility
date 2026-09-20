@@ -182,10 +182,14 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
   saying why (`on_binance` is true under any of spot/perpetual/futures —
   see `cmc_binance_listed`'s own `is_spot`/`is_perpetual`/`is_futures`
   for the per-category breakdown). Reads those two tables only, no CMC API calls of its
-  own; run after both. Doesn't replace either source table or
-  `/market-data` (which keeps reading `cmc_top600`/`cmc_binance_listed`
-  directly) -- it's a single place to answer "is this CMC id currently
-  tracked, and why."
+  own; run after both. **Replace semantics**, same as `cmc_field_details`/
+  `cg_field_details`/`coin_field_contrast`/`gap_details`: every run
+  recomputes the full universe and replaces the table's contents, so it
+  always holds a single current snapshot (no batching, no history) —
+  `fetched_at` is just "when this snapshot was last built". Doesn't
+  replace either source table or `/market-data` (which keeps reading
+  `cmc_top600`/`cmc_binance_listed` directly) -- it's a single place to
+  answer "is this CMC id currently tracked, and why."
 
 Both `pull_top600` and `pull_binance_listed` run daily via a dedicated Railway cron service (`market-data-cron`,
 `cronSchedule: 0 2 * * *`, `restartPolicyType: NEVER`) rather than
@@ -193,7 +197,7 @@ continuously — Railway only starts its container at the scheduled tick,
 not on deploy. The `/market-data` dashboard page always shows the latest
 batch, with a "last fetched" timestamp per tab.
 - `python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]` — pulls
-  CMC detail for **every** coin in `cmc_universe`'s latest batch (no
+  CMC detail for **every** coin in `cmc_universe`'s current snapshot (no
   CoinGecko id needed for that side) into `cmc_field_details`, and
   additionally pulls CoinGecko detail into `cg_field_details` for coins
   that have a resolved (`valid=True`) CoinGecko id via `cmc_cg_mapping`
@@ -237,8 +241,8 @@ batch, with a "last fetched" timestamp per tab.
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
 → `build_cmc_universe` → `full_detail_pull` → `build_field_contrast`.
-`full_detail_pull` reads its coin list from `cmc_universe`'s latest
-batch, so `build_cmc_universe` must run before it now (it used to read
+`full_detail_pull` reads its coin list from `cmc_universe`'s current
+snapshot, so `build_cmc_universe` must run before it now (it used to read
 `cmc_top600`/`cmc_binance_listed` directly).
 
 ## Other standalone scripts

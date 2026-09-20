@@ -66,10 +66,14 @@ class CmcBinanceListed(Base):
     perpetual, and futures markets, unioned and deduplicated by cmc_id --
     per CMC's own exchange listing data. Broader than the live worker's
     auto-tracking criteria (app.criteria.market_universe.fetch_cmc_binance_spot_ids,
-    spot-only on purpose). One batch of rows per run of
-    scripts/pull_binance_listed.py (all rows in a batch share the same
-    fetched_at). Append-only history, same latest-batch convention as
-    CmcTop600."""
+    spot-only on purpose). is_spot/is_perpetual/is_futures identify which
+    of the three market-pairs categories a coin was actually found under
+    (not mutually exclusive -- most spot coins are also perpetual). Rows
+    from before this column existed have all three as NULL: the category
+    breakdown wasn't tracked yet, not "found nowhere". One batch of rows
+    per run of scripts/pull_binance_listed.py (all rows in a batch share
+    the same fetched_at). Append-only history, same latest-batch
+    convention as CmcTop600."""
 
     __tablename__ = "cmc_binance_listed"
     __table_args__ = (Index("ix_cmc_binance_listed_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
@@ -79,6 +83,9 @@ class CmcBinanceListed(Base):
     name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_spot: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_perpetual: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_futures: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 

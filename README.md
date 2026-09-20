@@ -169,7 +169,8 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
   currently tradeable on Binance into `cmc_binance_listed`, same
   append-only convention. Unions spot, perpetual, and futures market
   pairs, deduplicated by `cmc_id` (a coin listed under more than one
-  category still gets exactly one row) — broader on purpose than
+  category still gets exactly one row, with `is_spot`/`is_perpetual`/
+  `is_futures` flagging which) — broader on purpose than
   `MarketUniverseProvider`'s live auto-tracking criteria above, which
   stays spot-only (Binance's perpetual listings include tokenized-stock
   contracts like AAPL/ADBE alongside crypto, not something to

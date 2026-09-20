@@ -63,11 +63,28 @@ def run() -> None:
                 rank = None
             db.add(
                 CmcBinanceListed(
-                    cmc_id=cid_str, name=name, symbol=meta["symbol"], cmc_rank=rank, fetched_at=batch_time
+                    cmc_id=cid_str,
+                    name=name,
+                    symbol=meta["symbol"],
+                    cmc_rank=rank,
+                    is_spot=meta["is_spot"],
+                    is_perpetual=meta["is_perpetual"],
+                    is_futures=meta["is_futures"],
+                    fetched_at=batch_time,
                 )
             )
         db.commit()
-        log.info("cmc_binance_listed: %d coins (batch %s)", len(binance_ids), batch_time.isoformat())
+        spot_n = sum(1 for m in binance_ids.values() if m["is_spot"])
+        perp_n = sum(1 for m in binance_ids.values() if m["is_perpetual"])
+        fut_n = sum(1 for m in binance_ids.values() if m["is_futures"])
+        log.info(
+            "cmc_binance_listed: %d coins (%d spot, %d perpetual, %d futures) (batch %s)",
+            len(binance_ids),
+            spot_n,
+            perp_n,
+            fut_n,
+            batch_time.isoformat(),
+        )
     finally:
         db.close()
 

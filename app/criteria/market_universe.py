@@ -329,15 +329,20 @@ def fetch_cmc_binance_spot_ids() -> dict[int, dict]:
 
 
 def fetch_cmc_binance_listed_ids() -> dict[int, dict]:
-    """{cmc_id: {symbol, slug}} for every coin CMC lists as tradeable on
-    Binance across spot, perpetual, and futures market pairs -- the union,
-    deduplicated by cmc_id (a coin listed under more than one category
-    only appears once). Used by scripts/pull_binance_listed.py for the
-    reference pipeline; NOT used by the live worker's auto-tracking (see
-    fetch_cmc_binance_spot_ids, which stays spot-only on purpose)."""
+    """{cmc_id: {symbol, slug, is_spot, is_perpetual, is_futures}} for
+    every coin CMC lists as tradeable on Binance across spot, perpetual,
+    and futures market pairs -- the union, deduplicated by cmc_id (a coin
+    listed under more than one category appears once, with a flag per
+    category it was actually found under -- not mutually exclusive, most
+    spot coins are also perpetual). Used by scripts/pull_binance_listed.py
+    for the reference pipeline; NOT used by the live worker's
+    auto-tracking (see fetch_cmc_binance_spot_ids, which stays spot-only
+    on purpose)."""
     ids: dict[int, dict] = {}
     for category in ("spot", "perpetual", "futures"):
-        ids.update(_fetch_cmc_binance_category_ids(category))
+        for cid, info in _fetch_cmc_binance_category_ids(category).items():
+            entry = ids.setdefault(cid, {**info, "is_spot": False, "is_perpetual": False, "is_futures": False})
+            entry[f"is_{category}"] = True
     return ids
 
 

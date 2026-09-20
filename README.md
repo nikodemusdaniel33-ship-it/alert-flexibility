@@ -151,7 +151,7 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 
 - `app/market_data/models.py` — `cmc_cg_mapping`, `cmc_top600`,
   `cmc_binance_listed`, `cmc_field_details`, `cg_field_details`,
-  `coin_field_contrast`.
+  `coin_field_contrast`, `gap_details`.
 - `data/cmc_cg_mapping.csv` (+ `data/cmc_cg_unmatched.csv`) — a
   human-reviewed CMC↔CoinGecko mapping export. Its `valid` column marks
   confidently-matched rows (contract address or a unique symbol) versus
@@ -193,7 +193,19 @@ batch, with a "last fetched" timestamp per tab.
   `cg_count` populated). `gap` is always set, meaning a different
   comparison depending on `field_type`: for social, `cmc_value` empty AND
   `cg_value` present; for the count rows, `cmc_count < cg_count`. Use
-  `--cmc-id` while testing.
+  `--cmc-id` while testing. The same run also writes `gap_details`: for
+  every `gap=true` row above except `explorer`, the specific missing
+  item(s) — one row per gapped social field; for `contract`, one row per
+  CoinGecko contract address that doesn't appear anywhere in CMC's address
+  list for that coin (compared by address, not chain slug, since the two
+  sources don't always agree on a slug for the same address — a
+  slug-only comparison produces false positives, e.g. CoinGecko's
+  `bitlayer` vs CMC's unmapped `Bitlayer` falling back to `cmc-bitlayer`);
+  for `tags`, one summary row (CoinGecko's tag count) rather than
+  per-tag, since there's no address-equivalent id to verify a
+  name-similarity match against. `explorer` gaps aren't broken out here
+  — URL values aren't reliably comparable across sources the way a
+  contract address is.
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
 → `full_detail_pull` → `build_field_contrast`.

@@ -145,3 +145,39 @@ class CoinFieldContrast(Base):
     cg_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gap: Mapped[bool] = mapped_column(Boolean, index=True)
     contrasted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class GapDetail(Base):
+    """Where a CoinFieldContrast gap=true row actually falls short
+    (scripts/build_field_contrast.py), built from the same
+    cmc_field_details/cg_field_details pass -- no extra API calls.
+    field_type is "social" | "contract" | "tags" (not "explorer": URL
+    values aren't reliably comparable across the two sources the way a
+    contract address is, so explorer gaps aren't broken out here).
+      - social: one row per gapped field. missing_item is the field name
+        (e.g. "discord"), cg_value is CoinGecko's value.
+      - contract: one row per chain CoinGecko lists whose contract
+        address (case-insensitive) doesn't appear anywhere in CMC's
+        address list for this coin -- compared by address, not by chain
+        slug, since the two sources don't always agree on a chain's slug
+        for the same address (e.g. CoinGecko's "bitlayer" vs CMC's
+        unmapped "Bitlayer" falling back to "cmc-bitlayer") and a
+        slug-only comparison produces false positives. missing_item is
+        CoinGecko's field_name (slug) for that chain, cg_value is the
+        address.
+      - tags: no per-tag id to verify a name-similarity match against (no
+        address-equivalent), so one summary row per coin instead of
+        per-tag: missing_item is the literal string "tags", cg_value is
+        CoinGecko's tag count as a string.
+    Snapshot, same replace-per-coin convention as CoinFieldContrast."""
+
+    __tablename__ = "gap_details"
+    __table_args__ = (Index("ix_gap_details_cmc_id_type", "cmc_id", "field_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
+    cg_id: Mapped[str] = mapped_column(String(256), index=True)
+    field_type: Mapped[str] = mapped_column(String(16))  # "social" | "contract" | "tags"
+    missing_item: Mapped[str] = mapped_column(String(64))
+    cg_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

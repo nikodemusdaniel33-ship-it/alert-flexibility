@@ -148,15 +148,6 @@ def _cg_market_values(raw_cg: dict) -> dict[str, object]:
     }
 
 
-def _cmc_tags(raw_cmc: dict) -> str | None:
-    names = [t.get("name") for t in raw_cmc.get("tags") or [] if isinstance(t, dict) and t.get("name")]
-    return ", ".join(names) or None
-
-
-def _cg_tags(raw_cg: dict) -> str | None:
-    return ", ".join(c for c in raw_cg.get("categories") or [] if c) or None
-
-
 def _cmc_rows(cmc_id: str, raw_cmc: dict, pulled_at) -> list[CmcFieldDetail]:
     rows = [
         CmcFieldDetail(cmc_id=cmc_id, field_type="social", field_name=name, value=_as_text(value), pulled_at=pulled_at)
@@ -166,9 +157,14 @@ def _cmc_rows(cmc_id: str, raw_cmc: dict, pulled_at) -> list[CmcFieldDetail]:
         CmcFieldDetail(cmc_id=cmc_id, field_type="market_data", field_name=name, value=_as_text(value), pulled_at=pulled_at)
         for name, value in _cmc_market_values(raw_cmc).items()
     )
-    tags = _cmc_tags(raw_cmc)
-    if tags:
-        rows.append(CmcFieldDetail(cmc_id=cmc_id, field_type="tags", field_name="tags", value=tags, pulled_at=pulled_at))
+    for t in raw_cmc.get("tags") or []:
+        if not isinstance(t, dict):
+            continue
+        name = t.get("name")
+        if not name:
+            continue
+        slug = t.get("slug") or name
+        rows.append(CmcFieldDetail(cmc_id=cmc_id, field_type="tags", field_name=slug, value=name, pulled_at=pulled_at))
 
     for p in raw_cmc.get("platforms") or []:
         name = (p.get("contractPlatform") or "").strip()
@@ -189,9 +185,9 @@ def _cg_rows(cg_id: str, raw_cg: dict, pulled_at) -> list[CgFieldDetail]:
         CgFieldDetail(cg_id=cg_id, field_type="market_data", field_name=name, value=_as_text(value), pulled_at=pulled_at)
         for name, value in _cg_market_values(raw_cg).items()
     )
-    tags = _cg_tags(raw_cg)
-    if tags:
-        rows.append(CgFieldDetail(cg_id=cg_id, field_type="tags", field_name="tags", value=tags, pulled_at=pulled_at))
+    for category in raw_cg.get("categories") or []:
+        if category:
+            rows.append(CgFieldDetail(cg_id=cg_id, field_type="tags", field_name=category, value=category, pulled_at=pulled_at))
 
     for cg_slug, address in (raw_cg.get("platforms") or {}).items():
         if not cg_slug or not address:

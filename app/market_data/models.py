@@ -114,5 +114,3 @@ class CoinDetail(Base):
     cg_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-
-    pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

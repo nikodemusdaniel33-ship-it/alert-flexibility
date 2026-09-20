@@ -150,8 +150,8 @@ A separate set of tables and scripts for building a reviewed, stable
 CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 
 - `app/market_data/models.py` — `cmc_cg_mapping`, `cmc_top600`,
-  `cmc_binance_listed`, `cmc_field_details`, `cg_field_details`,
-  `coin_field_contrast`, `gap_details`.
+  `cmc_binance_listed`, `cmc_universe`, `cmc_field_details`,
+  `cg_field_details`, `coin_field_contrast`, `gap_details`.
 - `data/cmc_cg_mapping.csv` (+ `data/cmc_cg_unmatched.csv`) — a
   human-reviewed CMC↔CoinGecko mapping export. Its `valid` column marks
   confidently-matched rows (contract address or a unique symbol) versus
@@ -169,8 +169,16 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
   currently on Binance Spot into `cmc_binance_listed`, same append-only
   convention. Reuses names from `cmc_top600`'s *latest* batch where
   possible; run `pull_top600` first for fewer API calls.
+- `python -m scripts.build_cmc_universe` — unions `cmc_top600`'s and
+  `cmc_binance_listed`'s latest batches into `cmc_universe`: one row per
+  CMC id tracked by either source, with `in_top600`/`on_binance_spot`
+  flags saying why. Reads those two tables only, no CMC API calls of its
+  own; run after both. Doesn't replace either source table or
+  `/market-data` (which keeps reading `cmc_top600`/`cmc_binance_listed`
+  directly) -- it's a single place to answer "is this CMC id currently
+  tracked, and why."
 
-Both run daily via a dedicated Railway cron service (`market-data-cron`,
+Both `pull_top600` and `pull_binance_listed` run daily via a dedicated Railway cron service (`market-data-cron`,
 `cronSchedule: 0 2 * * *`, `restartPolicyType: NEVER`) rather than
 continuously — Railway only starts its container at the scheduled tick,
 not on deploy. The `/market-data` dashboard page always shows the latest
@@ -209,7 +217,9 @@ batch, with a "last fetched" timestamp per tab.
   contract address is.
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
-→ `full_detail_pull` → `build_field_contrast`.
+→ `full_detail_pull` → `build_field_contrast`. `build_cmc_universe` only
+needs `pull_top600`/`pull_binance_listed` to have run -- it's independent
+of the rest of the chain.
 
 ## Other standalone scripts
 

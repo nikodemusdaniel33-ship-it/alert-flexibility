@@ -2,8 +2,8 @@
 exist (top-600 / Binance-listed), how CMC ids map to CoinGecko ids, and
 the full detail pulled for each. Standalone from `projects`/`gaps` for
 now -- populated by scripts/pull_top600.py, scripts/pull_binance_listed.py,
-scripts/import_cmc_cg_mapping.py and scripts/full_detail_pull.py, not yet
-wired into the live alerting worker.
+scripts/build_cmc_universe.py, scripts/import_cmc_cg_mapping.py and
+scripts/full_detail_pull.py, not yet wired into the live alerting worker.
 """
 
 from datetime import datetime, timezone
@@ -76,6 +76,31 @@ class CmcBinanceListed(Base):
     name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+class CmcUniverse(Base):
+    """The single "why is this coin tracked" table (scripts/build_cmc_universe.py):
+    one row per CMC id currently tracked by either source, with a flag per
+    source. Built by reading cmc_top600's and cmc_binance_listed's latest
+    batches and unioning them -- no CMC API calls of its own, no change to
+    either source table or /market-data (which keeps reading them
+    directly). in_top600 / on_binance_spot flag which source(s) found this
+    id; cmc_rank and name/symbol are taken from cmc_top600 when the id is
+    there (canonical), falling back to cmc_binance_listed's copy for a
+    Binance-only id. Append-only, same latest-batch convention as
+    CmcTop600/CmcBinanceListed -- run after both."""
+
+    __tablename__ = "cmc_universe"
+    __table_args__ = (Index("ix_cmc_universe_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    in_top600: Mapped[bool] = mapped_column(Boolean, default=False)
+    on_binance_spot: Mapped[bool] = mapped_column(Boolean, default=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 

@@ -192,16 +192,22 @@ Both `pull_top600` and `pull_binance_listed` run daily via a dedicated Railway c
 continuously — Railway only starts its container at the scheduled tick,
 not on deploy. The `/market-data` dashboard page always shows the latest
 batch, with a "last fetched" timestamp per tab.
-- `python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]` — for
-  every coin in `cmc_universe`'s latest batch that has a resolved
-  (`valid=True`) CoinGecko id via `cmc_cg_mapping`, pulls full CMC +
-  CoinGecko detail into `cmc_field_details`/`cg_field_details` (long/
-  normalized, one row per field — social, market_data, tags, contract,
-  explorer). Neither side has a bulk detail endpoint for this — CMC's
-  public detail API and CoinGecko's `/coins/{id}` are both one request
-  per coin, paced with retry-with-backoff; CoinGecko's free tier is the
-  slow part in practice (see `COINGECKO_API_KEY` below, which raises the
-  limit substantially). Use `--cmc-id` for a single coin while testing,
+- `python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]` — pulls
+  CMC detail for **every** coin in `cmc_universe`'s latest batch (no
+  CoinGecko id needed for that side) into `cmc_field_details`, and
+  additionally pulls CoinGecko detail into `cg_field_details` for coins
+  that have a resolved (`valid=True`) CoinGecko id via `cmc_cg_mapping`
+  — long/normalized, one row per field (social, market_data, tags,
+  contract, explorer). `cmc_field_details`'s `social` rows also include
+  `cmc_url` (CMC's own catalog page for the coin), deliberately excluded
+  from `coin_field_contrast`/`gap_details` since there's no CoinGecko
+  counterpart to compare it against. Neither side has a bulk detail
+  endpoint for this — CMC's public detail API and CoinGecko's
+  `/coins/{id}` are both one request per coin, paced with
+  retry-with-backoff; CoinGecko's free tier is the slow part in practice
+  (see `COINGECKO_API_KEY` below, which raises the limit substantially).
+  Every run replaces each target coin's rows outright — not
+  incremental. Use `--cmc-id` for a single coin while testing,
   or `--limit` to cap a run to the first N coins in the universe.
 
 - `python -m scripts.build_field_contrast [--cmc-id ID]` — for every coin

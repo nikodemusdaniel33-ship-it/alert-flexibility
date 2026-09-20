@@ -1,7 +1,17 @@
 """Pull raw CMC and CoinGecko field values for coins in cmc_universe's
-latest batch that have a resolved (valid=True) CoinGecko id, into two
-separate tables -- cmc_field_details and cg_field_details
-(`python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]`).
+latest batch into two separate tables -- cmc_field_details and
+cg_field_details (`python -m scripts.full_detail_pull [--limit N]
+[--cmc-id ID]`).
+
+CMC detail is pulled for EVERY coin in cmc_universe, whether or not it
+has a resolved CoinGecko id -- CMC's own data doesn't need one.
+CoinGecko detail is only pulled for coins with a resolved (valid=True)
+cmc_cg_mapping row, since that side needs a cg_id to know what to fetch.
+A coin without a valid mapping (or whose CoinGecko fetch fails this run)
+ends up with cmc_field_details rows and no cg_field_details rows --
+scripts.build_field_contrast already only processes coins with a valid
+mapping, so this is a normal, unremarkable state, not a partial failure
+to fix.
 
 Long/normalized, one table per source: each row is (id, field_type,
 field_name, value) -- e.g. (1975, social, twitter) in cmc_field_details or
@@ -19,6 +29,10 @@ retry-with-backoff on rate limits. CoinGecko's free tier is the slow part
 in practice (see README for COINGECKO_API_KEY, which raises the limit
 substantially). Use --cmc-id to pull a single coin while testing, or
 --limit to cap a run to the first N coins in the universe.
+
+Snapshot, not incremental: every run replaces each target coin's rows
+outright (delete then insert), whether or not that coin already had rows
+from a previous run.
 """
 
 import argparse
@@ -71,7 +85,17 @@ def _as_text(value) -> str | None:
     return str(value)
 
 
+def _cmc_url(raw_cmc: dict) -> str | None:
+    slug = raw_cmc.get("slug")
+    return f"https://coinmarketcap.com/currencies/{slug}/" if slug else None
+
+
 def _cmc_social_values(raw_cmc: dict) -> dict[str, object]:
+    # cmc_url has no CoinGecko counterpart (there's nothing to compare it
+    # against -- it's CMC's own catalog page for the coin) and is
+    # deliberately left out of build_field_contrast.SOCIAL_FIELDS, so it
+    # never reaches coin_field_contrast/gap_details. It's here purely as a
+    # convenience reference field on cmc_field_details itself.
     urls = _cmc_urls(raw_cmc)
     return {
         "website": _first(urls.get("website")),
@@ -83,6 +107,7 @@ def _cmc_social_values(raw_cmc: dict) -> dict[str, object]:
         "blog": _first(urls.get("announcement")),
         "facebook": _first(urls.get("facebook")),
         "github": urls.get("source_code"),
+        "cmc_url": _cmc_url(raw_cmc),
     }
 
 
@@ -217,34 +242,40 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
                 cmc_ids = cmc_ids[:limit]
 
         mappings = {m.cmc_id: m for m in db.query(CmcCgMapping).filter(CmcCgMapping.cmc_id.in_(cmc_ids)).all()}
-        targets = [(cid, mappings[cid].cg_id) for cid in cmc_ids if mappings.get(cid) and mappings[cid].valid and mappings[cid].cg_id]
-        skipped = len(cmc_ids) - len(targets)
-        log.info("Pulling field detail for %d coins with a valid CG mapping (%d skipped, no valid mapping)", len(targets), skipped)
 
-        for i, (cid, cg_id) in enumerate(targets, start=1):
+        targets = cmc_ids
+        with_cg = sum(1 for cid in targets if mappings.get(cid) and mappings[cid].valid and mappings[cid].cg_id)
+        log.info(
+            "Pulling CMC detail for %d coins (%d of those also get CoinGecko detail, valid mapping); "
+            "replaces each coin's existing rows",
+            len(targets),
+            with_cg,
+        )
+
+        for i, cid in enumerate(targets, start=1):
+            m = mappings.get(cid)
+            cg_id = m.cg_id if (m and m.valid and m.cg_id) else None
+
             try:
                 raw_cmc = fetch_cmc_detail_raw(int(cid))
             except (requests.RequestException, ValueError, KeyError) as exc:
-                log.warning("skipping cmc_id=%s (cg_id=%s): CMC fetch failed (%s)", cid, cg_id, exc)
-                if i < len(targets):
-                    time.sleep(CMC_DETAIL_REQUEST_DELAY_SECONDS)
-                continue
-
-            try:
-                raw_cg = fetch_cg_detail_raw(cg_id, market_data=True, community_data=True)
-            except requests.RequestException as exc:
-                log.warning("skipping cmc_id=%s (cg_id=%s): CoinGecko fetch failed (%s)", cid, cg_id, exc)
+                log.warning("skipping cmc_id=%s: CMC fetch failed (%s)", cid, exc)
                 if i < len(targets):
                     time.sleep(CMC_DETAIL_REQUEST_DELAY_SECONDS)
                 continue
 
             pulled_at = datetime.now(timezone.utc)
-
             db.query(CmcFieldDetail).filter(CmcFieldDetail.cmc_id == cid).delete(synchronize_session=False)
             db.add_all(_cmc_rows(cid, raw_cmc, pulled_at))
 
-            db.query(CgFieldDetail).filter(CgFieldDetail.cg_id == cg_id).delete(synchronize_session=False)
-            db.add_all(_cg_rows(cg_id, raw_cg, pulled_at))
+            if cg_id:
+                try:
+                    raw_cg = fetch_cg_detail_raw(cg_id, market_data=True, community_data=True)
+                except requests.RequestException as exc:
+                    log.warning("cmc_id=%s: CoinGecko fetch failed (%s) -- CMC side saved, CG side left as-is", cid, exc)
+                else:
+                    db.query(CgFieldDetail).filter(CgFieldDetail.cg_id == cg_id).delete(synchronize_session=False)
+                    db.add_all(_cg_rows(cg_id, raw_cg, pulled_at))
 
             if i < len(targets):
                 time.sleep(CMC_DETAIL_REQUEST_DELAY_SECONDS)

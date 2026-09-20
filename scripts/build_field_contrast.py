@@ -2,10 +2,15 @@
 cmc_field_details/cg_field_details tables (scripts/full_detail_pull.py) --
 no API calls of its own, just a join via cmc_cg_mapping and some counting.
 
-Since full_detail_pull only ever writes a coin's field-detail rows after
-BOTH its CMC and CoinGecko fetches succeed in the same run, any cmc_id
-with cmc_field_details rows is guaranteed to have matching cg_field_details
-rows for its mapped cg_id -- no partial-data cases to handle here.
+full_detail_pull now writes CMC's side for every coin in cmc_universe,
+whether or not it has a resolved mapping, and CoinGecko's side separately
+(only when a valid mapping exists, and only if that fetch happens to
+succeed). So a valid-mapping coin can still end up with cmc_field_details
+rows and no cg_field_details rows yet (CG fetch failed or hasn't run) --
+handled the same way as a coin with nothing on either side: cg_details
+comes back empty, every cg_value/cg_count reads as absent/zero, so no
+gap is (falsely) reported until that coin's CoinGecko side is actually
+pulled.
 
 For each coin with a valid (cmc_cg_mapping.valid=True) mapping and
 existing field-detail rows, writes to coin_field_contrast:

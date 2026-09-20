@@ -162,12 +162,13 @@ class CgFieldDetail(Base):
 class CoinFieldContrast(Base):
     """Precomputed CMC-vs-CoinGecko contrast (scripts/build_field_contrast.py),
     built from cmc_field_details/cg_field_details -- no API calls of its
-    own. One row per (coin, social field) -- 9 rows, field_name/cmc_value/
-    cg_value populated, cmc_count/cg_count NULL -- plus one summary row
-    each for field_type in (contract, explorer, tags) -- cmc_count/cg_count
-    populated, field_name/cmc_value/cg_value NULL. `gap` is always set,
-    but means a different comparison depending on field_type:
-      - social: cmc_value is empty AND cg_value is present.
+    own. One row per (coin, field) for field_type in (social, market_data)
+    -- 9 + 8 rows, field_name/cmc_value/cg_value populated, cmc_count/
+    cg_count NULL -- plus one summary row each for field_type in
+    (contract, explorer, tags) -- cmc_count/cg_count populated,
+    field_name/cmc_value/cg_value NULL. `gap` is always set, but means a
+    different comparison depending on field_type:
+      - social/market_data: cmc_value is empty AND cg_value is present.
       - contract/explorer/tags: cmc_count < cg_count.
     Snapshot, same replace-per-coin convention as CmcFieldDetail."""
 
@@ -191,11 +192,13 @@ class GapDetail(Base):
     """Where a CoinFieldContrast gap=true row actually falls short
     (scripts/build_field_contrast.py), built from the same
     cmc_field_details/cg_field_details pass -- no extra API calls.
-    field_type is "social" | "contract" | "tags" (not "explorer": URL
-    values aren't reliably comparable across the two sources the way a
-    contract address is, so explorer gaps aren't broken out here).
-      - social: one row per gapped field. missing_item is the field name
-        (e.g. "discord"), cg_value is CoinGecko's value.
+    field_type is "social" | "market_data" | "contract" | "tags" (not
+    "explorer": URL values aren't reliably comparable across the two
+    sources the way a contract address is, so explorer gaps aren't
+    broken out here).
+      - social/market_data: one row per gapped field. missing_item is the
+        field name (e.g. "discord", "market_cap"), cg_value is
+        CoinGecko's value.
       - contract: one row per chain CoinGecko lists whose contract
         address (case-insensitive) doesn't appear anywhere in CMC's
         address list for this coin -- compared by address, not by chain

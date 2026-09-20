@@ -204,15 +204,16 @@ batch, with a "last fetched" timestamp per tab.
 - `python -m scripts.build_field_contrast [--cmc-id ID]` — for every coin
   with a valid mapping and existing `cmc_field_details`/`cg_field_details`
   rows, computes a contrast snapshot into `coin_field_contrast`: reads
-  those two tables only, no API calls. One row per social field (9,
-  `field_name`/`cmc_value`/`cg_value` populated) plus one summary row each
-  for `field_type` in (`contract`, `explorer`, `tags`) (`cmc_count`/
-  `cg_count` populated). `gap` is always set, meaning a different
-  comparison depending on `field_type`: for social, `cmc_value` empty AND
-  `cg_value` present; for the count rows, `cmc_count < cg_count`. Use
-  `--cmc-id` while testing. The same run also writes `gap_details`: for
-  every `gap=true` row above except `explorer`, the specific missing
-  item(s) — one row per gapped social field; for `contract`, one row per
+  those two tables only, no API calls. One row per social field (9) and
+  per market_data field (8, `field_name`/`cmc_value`/`cg_value`
+  populated) plus one summary row each for `field_type` in (`contract`,
+  `explorer`, `tags`) (`cmc_count`/`cg_count` populated). `gap` is always
+  set, meaning a different comparison depending on `field_type`: for
+  social/market_data, `cmc_value` empty AND `cg_value` present; for the
+  count rows, `cmc_count < cg_count`. Use `--cmc-id` while testing. The
+  same run also writes `gap_details`: for every `gap=true` row above
+  except `explorer`, the specific missing item(s) — one row per gapped
+  social/market_data field; for `contract`, one row per
   CoinGecko contract address that doesn't appear anywhere in CMC's address
   list for that coin (compared by address, not chain slug, since the two
   sources don't always agree on a slug for the same address — a

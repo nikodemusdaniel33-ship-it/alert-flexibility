@@ -9,15 +9,16 @@ rows for its mapped cg_id -- no partial-data cases to handle here.
 
 For each coin with a valid (cmc_cg_mapping.valid=True) mapping and
 existing field-detail rows, writes to coin_field_contrast:
-  - 9 social rows (one per field_name in SOCIAL_FIELDS): cmc_value,
-    cg_value, and gap = cmc_value is empty AND cg_value is present.
+  - 9 social rows (one per field_name in SOCIAL_FIELDS) and 8 market_data
+    rows (one per field_name in MARKET_DATA_FIELDS): cmc_value, cg_value,
+    and gap = cmc_value is empty AND cg_value is present.
   - 1 summary row each for field_type in (contract, explorer, tags):
     cmc_count, cg_count (row counts per field_type), and
     gap = cmc_count < cg_count.
 
 ...and, for each gap=true row above (except explorer -- see GapDetail's
 docstring), writes the specific missing item(s) to gap_details:
-  - social: the gapped field itself, one row.
+  - social / market_data: the gapped field itself, one row.
   - contract: every CoinGecko contract address that doesn't appear
     anywhere in CMC's address list for this coin -- by address, not by
     chain slug (the two sources don't always agree on a slug for the
@@ -43,6 +44,19 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger("build_field_contrast")
 
 SOCIAL_FIELDS = ("website", "twitter", "reddit", "discord", "whitepaper", "forum", "blog", "facebook", "github")
+MARKET_DATA_FIELDS = (
+    "current_price",
+    "price_change_24h",
+    "market_cap",
+    "volume_24h",
+    "circulating_supply",
+    "self_reported_circulating_supply",
+    "total_supply",
+    "max_supply",
+)
+# Both field_types are per-field, narrow-gap comparisons (cmc empty, cg
+# present) -- unlike COUNT_FIELD_TYPES below, which compare row counts.
+PER_FIELD_TYPES = {"social": SOCIAL_FIELDS, "market_data": MARKET_DATA_FIELDS}
 COUNT_FIELD_TYPES = ("contract", "explorer", "tags")
 
 
@@ -50,24 +64,29 @@ def _is_present(value: str | None) -> bool:
     return value is not None and value != ""
 
 
-def _build_rows(
-    cmc_id: str, cg_id: str, cmc_details: list[CmcFieldDetail], cg_details: list[CgFieldDetail], now: datetime
+def _per_field_rows(
+    cmc_id: str,
+    cg_id: str,
+    field_type: str,
+    field_names: tuple[str, ...],
+    cmc_details: list[CmcFieldDetail],
+    cg_details: list[CgFieldDetail],
+    now: datetime,
 ) -> tuple[list[CoinFieldContrast], list[GapDetail]]:
-    cmc_social = {d.field_name: d.value for d in cmc_details if d.field_type == "social"}
-    cg_social = {d.field_name: d.value for d in cg_details if d.field_type == "social"}
+    cmc_values = {d.field_name: d.value for d in cmc_details if d.field_type == field_type}
+    cg_values = {d.field_name: d.value for d in cg_details if d.field_type == field_type}
 
     contrast_rows: list[CoinFieldContrast] = []
     gap_rows: list[GapDetail] = []
-
-    for field_name in SOCIAL_FIELDS:
-        cmc_value = cmc_social.get(field_name)
-        cg_value = cg_social.get(field_name)
+    for field_name in field_names:
+        cmc_value = cmc_values.get(field_name)
+        cg_value = cg_values.get(field_name)
         gap = not _is_present(cmc_value) and _is_present(cg_value)
         contrast_rows.append(
             CoinFieldContrast(
                 cmc_id=cmc_id,
                 cg_id=cg_id,
-                field_type="social",
+                field_type=field_type,
                 field_name=field_name,
                 cmc_value=cmc_value,
                 cg_value=cg_value,
@@ -77,8 +96,21 @@ def _build_rows(
         )
         if gap:
             gap_rows.append(
-                GapDetail(cmc_id=cmc_id, cg_id=cg_id, field_type="social", missing_item=field_name, cg_value=cg_value, detected_at=now)
+                GapDetail(cmc_id=cmc_id, cg_id=cg_id, field_type=field_type, missing_item=field_name, cg_value=cg_value, detected_at=now)
             )
+    return contrast_rows, gap_rows
+
+
+def _build_rows(
+    cmc_id: str, cg_id: str, cmc_details: list[CmcFieldDetail], cg_details: list[CgFieldDetail], now: datetime
+) -> tuple[list[CoinFieldContrast], list[GapDetail]]:
+    contrast_rows: list[CoinFieldContrast] = []
+    gap_rows: list[GapDetail] = []
+
+    for field_type, field_names in PER_FIELD_TYPES.items():
+        c_rows, g_rows = _per_field_rows(cmc_id, cg_id, field_type, field_names, cmc_details, cg_details, now)
+        contrast_rows.extend(c_rows)
+        gap_rows.extend(g_rows)
 
     cmc_counts: dict[str, int] = defaultdict(int)
     for d in cmc_details:

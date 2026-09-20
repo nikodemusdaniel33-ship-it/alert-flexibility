@@ -79,22 +79,41 @@ class CmcBinanceListed(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
-class CoinFieldDetail(Base):
-    """Per-field CMC vs CoinGecko comparison (scripts/full_detail_pull.py):
-    one row per (cg_id, field_type, field_name), e.g. (bitcoin, social,
-    twitter) or (bitcoin, contract, ethereum) -- long/normalized so a plain
-    SQL WHERE can filter/sort by field without unpacking JSON. Only coins
-    with a resolved (valid=True) CoinGecko id get rows here. Snapshot: all
-    of one cg_id's rows are replaced together on each pull, not a history."""
+class CmcFieldDetail(Base):
+    """Raw CMC field values (scripts/full_detail_pull.py), one row per
+    (cmc_id, field_type, field_name) -- e.g. (1975, social, twitter) or
+    (1975, contract, ethereum). Independent of any CoinGecko mapping: in
+    principle every coin in the tracked universe can have rows here
+    regardless of match confidence (current pull still only runs for
+    coins with a resolved CG id -- see full_detail_pull.py). Snapshot:
+    all of one cmc_id's rows are replaced together on each pull."""
 
-    __tablename__ = "coin_field_details"
-    __table_args__ = (Index("ix_coin_field_details_cg_id_type_name", "cg_id", "field_type", "field_name"),)
+    __tablename__ = "cmc_field_details"
+    __table_args__ = (Index("ix_cmc_field_details_cmc_id_type_name", "cmc_id", "field_type", "field_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
+    field_type: Mapped[str] = mapped_column(String(16))  # "social" | "contract" | "explorer"
+    field_name: Mapped[str] = mapped_column(String(64))  # e.g. "website", "twitter"; chain slug for contract/explorer
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class CgFieldDetail(Base):
+    """Raw CoinGecko field values (scripts/full_detail_pull.py), one row
+    per (cg_id, field_type, field_name) -- e.g. (chainlink, social,
+    twitter) or (chainlink, contract, ethereum). Only coins with a
+    resolved (valid=True) CoinGecko id get rows here -- fetching needs to
+    know which CoinGecko coin to call. Snapshot, same convention as
+    CmcFieldDetail. Comparing the two tables (join on cmc_cg_mapping) is
+    left to the reader/query rather than precomputed and stored."""
+
+    __tablename__ = "cg_field_details"
+    __table_args__ = (Index("ix_cg_field_details_cg_id_type_name", "cg_id", "field_type", "field_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     cg_id: Mapped[str] = mapped_column(String(256), index=True)
-    field_type: Mapped[str] = mapped_column(String(16))  # "social" | "contract" | "explorer"
-    field_name: Mapped[str] = mapped_column(String(64))  # e.g. "website", "twitter"; chain slug for contract/explorer
-    cmc_value: Mapped[str | None] = mapped_column(Text, nullable=True)
-    cg_value: Mapped[str | None] = mapped_column(Text, nullable=True)
-    differs: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    field_type: Mapped[str] = mapped_column(String(16))
+    field_name: Mapped[str] = mapped_column(String(64))
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)
     pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

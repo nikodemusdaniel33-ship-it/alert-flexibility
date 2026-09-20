@@ -117,3 +117,31 @@ class CgFieldDetail(Base):
     field_name: Mapped[str] = mapped_column(String(64))
     value: Mapped[str | None] = mapped_column(Text, nullable=True)
     pulled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class CoinFieldContrast(Base):
+    """Precomputed CMC-vs-CoinGecko contrast (scripts/build_field_contrast.py),
+    built from cmc_field_details/cg_field_details -- no API calls of its
+    own. One row per (coin, social field) -- 9 rows, field_name/cmc_value/
+    cg_value populated, cmc_count/cg_count NULL -- plus one summary row
+    each for field_type in (contract, explorer, tags) -- cmc_count/cg_count
+    populated, field_name/cmc_value/cg_value NULL. `gap` is always set,
+    but means a different comparison depending on field_type:
+      - social: cmc_value is empty AND cg_value is present.
+      - contract/explorer/tags: cmc_count < cg_count.
+    Snapshot, same replace-per-coin convention as CmcFieldDetail."""
+
+    __tablename__ = "coin_field_contrast"
+    __table_args__ = (Index("ix_coin_field_contrast_cmc_id_type", "cmc_id", "field_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
+    cg_id: Mapped[str] = mapped_column(String(256), index=True)
+    field_type: Mapped[str] = mapped_column(String(16))  # "social" | "contract" | "explorer" | "tags"
+    field_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cmc_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cg_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cmc_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cg_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gap: Mapped[bool] = mapped_column(Boolean, index=True)
+    contrasted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)

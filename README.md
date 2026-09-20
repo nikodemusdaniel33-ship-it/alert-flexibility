@@ -150,7 +150,8 @@ A separate set of tables and scripts for building a reviewed, stable
 CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 
 - `app/market_data/models.py` — `cmc_cg_mapping`, `cmc_top600`,
-  `cmc_binance_listed`, `coin_details`.
+  `cmc_binance_listed`, `cmc_field_details`, `cg_field_details`,
+  `coin_field_contrast`.
 - `data/cmc_cg_mapping.csv` (+ `data/cmc_cg_unmatched.csv`) — a
   human-reviewed CMC↔CoinGecko mapping export. Its `valid` column marks
   confidently-matched rows (contract address or a unique symbol) versus
@@ -183,8 +184,19 @@ batch, with a "last fetched" timestamp per tab.
   detail endpoint, so that side is one call per coin and is the slow part
   of a full run — use `--limit` while testing.
 
+- `python -m scripts.build_field_contrast [--cmc-id ID]` — for every coin
+  with a valid mapping and existing `cmc_field_details`/`cg_field_details`
+  rows, computes a contrast snapshot into `coin_field_contrast`: reads
+  those two tables only, no API calls. One row per social field (9,
+  `field_name`/`cmc_value`/`cg_value` populated) plus one summary row each
+  for `field_type` in (`contract`, `explorer`, `tags`) (`cmc_count`/
+  `cg_count` populated). `gap` is always set, meaning a different
+  comparison depending on `field_type`: for social, `cmc_value` empty AND
+  `cg_value` present; for the count rows, `cmc_count < cg_count`. Use
+  `--cmc-id` while testing.
+
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
-→ `full_detail_pull`.
+→ `full_detail_pull` → `build_field_contrast`.
 
 ## Other standalone scripts
 

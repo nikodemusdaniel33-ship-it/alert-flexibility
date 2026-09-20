@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>alert-flexibility · market data</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, sans-serif; margin: 2rem; color: #1a1a1a; background: #fafafa; }
+    .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    h1 { font-size: 1.25rem; }
+    .back { margin-bottom: 1rem; display: inline-block; }
+    table { border-collapse: collapse; width: 100%; background: #fff; }
+    th, td { border: 1px solid #ddd; padding: 0.4rem 0.6rem; text-align: left; font-size: 0.85rem; }
+    th { background: #f0f0f0; }
+
+    input.tab-radio { display: none; }
+    .tabs { margin-bottom: 0; }
+    .tabs label { display: inline-block; padding: 0.5rem 1rem; border: 1px solid #ddd; border-bottom: none; background: #eee; cursor: pointer; font-size: 0.9rem; border-radius: 6px 6px 0 0; margin-right: 4px; }
+    .tab-content { display: none; }
+    #tab-top600:checked ~ .tabs label[for="tab-top600"],
+    #tab-binance:checked ~ .tabs label[for="tab-binance"] { background: #fff; font-weight: 600; border-bottom: 1px solid #fff; margin-bottom: -1px; }
+    #tab-top600:checked ~ #content-top600,
+    #tab-binance:checked ~ #content-binance { display: block; }
+    .count { color: #666; font-size: 0.8rem; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div>
+      <a class="back" href="/">&larr; back to dashboard</a>
+      <h1>Market data</h1>
+    </div>
+    <div>Signed in as <strong>{{ user.display_name }}</strong> — <a href="/logout">sign out</a></div>
+  </div>
+
+  <input type="radio" name="tab" id="tab-top600" class="tab-radio" checked>
+  <input type="radio" name="tab" id="tab-binance" class="tab-radio">
+
+  <div class="tabs">
+    <label for="tab-top600">Top 600 CMC ranking</label>
+    <label for="tab-binance">Binance Spot</label>
+  </div>
+
+  <div class="tab-content" id="content-top600">
+    <p class="count">{{ top600 | length }} coins{% if latest_top600_at %} · last fetched {{ latest_top600_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</p>
+    <table>
+      <thead><tr><th>Rank</th><th>Symbol</th><th>Name</th><th>CMC ID</th><th>Fetched</th></tr></thead>
+      <tbody>
+        {% for c in top600 %}
+        <tr><td>{{ c.cmc_rank }}</td><td>{{ c.symbol }}</td><td>{{ c.name }}</td><td>{{ c.cmc_id }}</td><td>{{ c.fetched_at.strftime('%Y-%m-%d %H:%M') }} UTC</td></tr>
+        {% else %}
+        <tr><td colspan="5">No data yet — run <code>python -m scripts.pull_top600</code>.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="tab-content" id="content-binance">
+    <p class="count">{{ binance_listed | length }} coins{% if latest_binance_at %} · last fetched {{ latest_binance_at.strftime('%Y-%m-%d %H:%M') }} UTC{% endif %}</p>
+    <table>
+      <thead><tr><th>Rank</th><th>Symbol</th><th>Name</th><th>CMC ID</th><th>Fetched</th></tr></thead>
+      <tbody>
+        {% for c in binance_listed %}
+        <tr><td>{{ c.cmc_rank or '—' }}</td><td>{{ c.symbol }}</td><td>{{ c.name or '—' }}</td><td>{{ c.cmc_id }}</td><td>{{ c.fetched_at.strftime('%Y-%m-%d %H:%M') }} UTC</td></tr>
+        {% else %}
+        <tr><td colspan="5">No data yet — run <code>python -m scripts.pull_binance_listed</code>.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</body>
+</html>

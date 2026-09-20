@@ -11,11 +11,11 @@ from datetime import datetime, timedelta, timezone
 import requests
 from sqlalchemy.orm import Session
 
-from app.clients import cmc, coingecko
-from app.compare import TRACKED_FIELDS
 from app.config import settings
 from app.criteria import sync as criteria_sync
+from app.criteria.market_universe import fetch_cg_detail_raw, fetch_cmc_detail_raw
 from app.db import SessionLocal, ensure_schema
+from app.detail_compare import field_checklist
 from app.models import CompletenessCheck, Gap, GapStatus, Project
 from app.telegram import send_alert
 
@@ -99,28 +99,29 @@ def _handle_field(db: Session, project: Project, field: str, is_missing: bool, n
 
 def check_project(db: Session, project: Project) -> None:
     now = datetime.now(timezone.utc)
-    cmc_fields: dict = {}
-    cg_fields: dict = {}
+    raw_cmc: dict = {}
+    raw_cg: dict = {}
     cmc_error = None
     cg_error = None
 
     try:
-        cmc_fields = cmc.fetch_socials(project.cmc_id)
+        raw_cmc = fetch_cmc_detail_raw(int(project.cmc_id))
     except requests.RequestException as exc:
         cmc_error = str(exc)
         log.warning("CMC fetch failed for %s: %s", project.symbol, exc)
 
     try:
-        cg_fields = coingecko.fetch_socials(project.coingecko_id)
+        raw_cg = fetch_cg_detail_raw(project.coingecko_id, market_data=True, community_data=True)
     except requests.RequestException as exc:
         cg_error = str(exc)
         log.warning("CoinGecko fetch failed for %s: %s", project.symbol, exc)
 
+    checklist = field_checklist(raw_cmc, raw_cg) if not cmc_error and not cg_error else {}
     db.add(
         CompletenessCheck(
             project_id=project.id,
-            cmc_fields={k: v for k, v in cmc_fields.items() if k != "_raw"},
-            cg_fields={k: v for k, v in cg_fields.items() if k != "_raw"},
+            cmc_fields=checklist,
+            cg_fields={},
             cmc_error=cmc_error,
             cg_error=cg_error,
         )
@@ -131,8 +132,7 @@ def check_project(db: Session, project: Project) -> None:
         db.commit()
         return
 
-    for field in TRACKED_FIELDS:
-        is_missing = bool(cg_fields.get(field)) and not cmc_fields.get(field)
+    for field, is_missing in checklist.items():
         _handle_field(db, project, field, is_missing, now)
 
     db.commit()

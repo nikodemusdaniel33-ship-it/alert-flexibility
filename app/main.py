@@ -4,7 +4,6 @@ import requests
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth import (
@@ -153,25 +152,13 @@ def market_data_page(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    latest_top600_at = db.query(func.max(CmcTop600.fetched_at)).scalar()
-    top600 = (
-        db.query(CmcTop600)
-        .filter(CmcTop600.fetched_at == latest_top600_at)
-        .order_by(CmcTop600.cmc_rank)
-        .all()
-        if latest_top600_at
-        else []
-    )
+    top600 = db.query(CmcTop600).order_by(CmcTop600.cmc_rank).all()
+    latest_top600_at = top600[0].fetched_at if top600 else None
 
-    latest_binance_at = db.query(func.max(CmcBinanceListed.fetched_at)).scalar()
     binance_listed = (
-        db.query(CmcBinanceListed)
-        .filter(CmcBinanceListed.fetched_at == latest_binance_at)
-        .order_by(CmcBinanceListed.cmc_rank.is_(None), CmcBinanceListed.cmc_rank)
-        .all()
-        if latest_binance_at
-        else []
+        db.query(CmcBinanceListed).order_by(CmcBinanceListed.cmc_rank.is_(None), CmcBinanceListed.cmc_rank).all()
     )
+    latest_binance_at = binance_listed[0].fetched_at if binance_listed else None
 
     return templates.TemplateResponse(
         "market_data.html",

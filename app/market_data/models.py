@@ -1,7 +1,8 @@
 """Reference-data tables for the market-universe pipeline: which coins
-exist (top-600 / Binance-listed), how CMC ids map to CoinGecko ids, and
-the full detail pulled for each. Standalone from `projects`/`gaps` for
-now -- populated by scripts/pull_top600.py, scripts/pull_binance_listed.py,
+exist (top-600 / Binance-listed / Aster-listed), how CMC ids map to
+CoinGecko ids, and the full detail pulled for each. Standalone from
+`projects`/`gaps` for now -- populated by scripts/pull_top600.py,
+scripts/pull_binance_listed.py, scripts/pull_aster_listed.py,
 scripts/build_cmc_universe.py, scripts/import_cmc_cg_mapping.py and
 scripts/full_detail_pull.py, not yet wired into the live alerting worker.
 """
@@ -45,14 +46,16 @@ class CmcCgMapping(Base):
 
 
 class CmcTop600(Base):
-    """Top-N CMC coins by market cap (tab 1), one batch of rows per run of
-    scripts/pull_top600.py (all rows in a batch share the same fetched_at).
-    Append-only history -- callers wanting the current snapshot must filter
-    to the latest fetched_at themselves (see app.main's /market-data).
-    `slug` is CMC's own per-coin URL slug, carried through from the listing
-    API response purely so scripts.build_cmc_universe can derive cmc_url
-    without an API call of its own; rows from before this column existed
-    have it NULL until their next pull_top600 run."""
+    """Top-N CMC coins by market cap (tab 1), scripts/pull_top600.py.
+    Replace semantics: every run deletes all existing rows and inserts the
+    fresh top-N, so this always holds a single current snapshot -- no
+    batch history (until 2026-09-21 this was append-only, one growing
+    batch per run; that history is gone as of the conversion, by design).
+    fetched_at is just "when this snapshot was last pulled", shared by
+    every row in it. `slug` is CMC's own per-coin URL slug, carried
+    through from the listing API response purely so
+    scripts.build_cmc_universe can derive cmc_url without an API call of
+    its own."""
 
     __tablename__ = "cmc_top600"
     __table_args__ = (Index("ix_cmc_top600_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
@@ -73,16 +76,14 @@ class CmcBinanceListed(Base):
     auto-tracking criteria (app.criteria.market_universe.fetch_cmc_binance_spot_ids,
     spot-only on purpose). is_spot/is_perpetual/is_futures identify which
     of the three market-pairs categories a coin was actually found under
-    (not mutually exclusive -- most spot coins are also perpetual). Rows
-    from before this column existed have all three as NULL: the category
-    breakdown wasn't tracked yet, not "found nowhere". One batch of rows
-    per run of scripts/pull_binance_listed.py (all rows in a batch share
-    the same fetched_at). Append-only history, same latest-batch
-    convention as CmcTop600. `slug` is CMC's own per-coin URL slug (also
-    carried through for scripts.build_cmc_universe's cmc_url, same as
+    (not mutually exclusive -- most spot coins are also perpetual).
+    Replace semantics, same as CmcTop600: every run deletes all existing
+    rows and inserts the fresh union, single current snapshot, no batch
+    history (converted from append-only alongside CmcTop600 on
+    2026-09-21). `slug` is CMC's own per-coin URL slug (also carried
+    through for scripts.build_cmc_universe's cmc_url, same as
     CmcTop600's) -- CMC's market-pairs API already returns it, so this
-    costs no extra call either; rows from before this column existed have
-    it NULL until their next pull_binance_listed run."""
+    costs no extra call either."""
 
     __tablename__ = "cmc_binance_listed"
     __table_args__ = (Index("ix_cmc_binance_listed_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
@@ -99,31 +100,70 @@ class CmcBinanceListed(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
+class CmcAsterListed(Base):
+    """CMC-listed coins currently tradeable on Aster (the DEX, CMC exchange
+    slug `aster-pro`) -- same shape and semantics as CmcBinanceListed:
+    spot/perpetual/futures market pairs, unioned and deduplicated by
+    cmc_id, is_spot/is_perpetual/is_futures flagging which category(ies)
+    a coin was found under. Replace semantics (single current snapshot,
+    no batch history), same as CmcTop600/CmcBinanceListed -- built as
+    replace from the start, this table never was append-only.
+    scripts/pull_aster_listed.py populates it; not part of
+    MarketUniverseProvider's live auto-tracking (Binance-spot-only, see
+    CmcBinanceListed's docstring) -- purely a third source feeding
+    cmc_universe."""
+
+    __tablename__ = "cmc_aster_listed"
+    __table_args__ = (Index("ix_cmc_aster_listed_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    slug: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_spot: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_perpetual: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_futures: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
 class CmcUniverse(Base):
     """The single "why is this coin tracked" table (scripts/build_cmc_universe.py):
-    one row per CMC id currently tracked by either source, with a flag per
-    source. Built by reading cmc_top600's and cmc_binance_listed's latest
-    batches and unioning them -- no CMC API calls of its own, no change to
-    either source table or /market-data (which keeps reading them
-    directly). in_top600 / on_binance flag which source(s) found this id;
-    on_binance is true if the id is in cmc_binance_listed under ANY of
-    spot/perpetual/futures -- deliberately not broken out per-category
-    here the way cmc_binance_listed's is_spot/is_perpetual/is_futures are
-    (this table only answers "is it tracked, and via which of the two
-    top-level sources", not the finer-grained why). cmc_rank, name/symbol,
-    and slug (used to derive cmc_url below) are taken from cmc_top600 when
-    the id is there (canonical), falling back to cmc_binance_listed's copy
-    for a Binance-only id. cmc_url is CMC's own catalog page for the coin
-    (app.criteria.market_universe.cmc_currency_url on that slug) --
-    derived here rather than fetched, so this table keeps making zero CMC
-    API calls of its own; a coin whose source row predates the slug
-    column has cmc_url NULL until cmc_top600/cmc_binance_listed re-pull
-    it. Replace semantics, same as CoinFieldContrast/GapDetail/
+    one row per CMC id currently tracked by any of three sources, with a
+    flag per source. Built by reading cmc_top600's, cmc_binance_listed's,
+    and cmc_aster_listed's current snapshots and unioning them -- no CMC
+    API calls of its own, no change to any source table or /market-data
+    (which keeps reading cmc_top600/cmc_binance_listed directly).
+    in_top600 / on_binance / on_aster flag which source(s) found this id;
+    on_binance and on_aster are each true if the id is in that source
+    under ANY of spot/perpetual/futures -- deliberately not broken out
+    per-category here the way each source's own is_spot/is_perpetual/
+    is_futures are. cmc_rank, name/symbol, and slug (used to derive
+    cmc_url below) are taken in precedence order cmc_top600 >
+    cmc_binance_listed > cmc_aster_listed (top600 canonical, then
+    whichever of the other two has the id). cmc_url is CMC's own catalog
+    page for the coin (app.criteria.market_universe.cmc_currency_url on
+    that slug) -- derived here rather than fetched, so this table keeps
+    making zero CMC API calls of its own.
+
+    Replace semantics, same as CoinFieldContrast/GapDetail/
     CmcFieldDetail/CgFieldDetail: every run recomputes the full universe
-    from cmc_top600/cmc_binance_listed and replaces this table's
-    contents, so it always holds a single current snapshot, no history.
+    and replaces this table's contents, so it always holds a single
+    current snapshot, no history. A coin absent from all three sources'
+    current snapshots simply has no row here -- there is no "keep the row,
+    mark every flag false" state; a coin nothing currently tracks has no
+    reason for a row to exist (deliberate: the alternative would make
+    full_detail_pull keep spending CMC/CoinGecko API calls on delisted
+    coins forever). To keep cmc_field_details/cg_field_details from
+    accumulating rows for coins that fall out this way, every
+    build_cmc_universe run also deletes any cmc_field_details/
+    cg_field_details rows whose cmc_id/cg_id no longer corresponds to a
+    row in the freshly rebuilt cmc_universe -- see build_cmc_universe.py.
     fetched_at is just "when this snapshot was last built", not a batch
-    key -- run after both source scripts."""
+    key -- run after all three source scripts (or let each of their
+    scripts call build_cmc_universe.run() themselves, which is what they
+    do now)."""
 
     __tablename__ = "cmc_universe"
     __table_args__ = (Index("ix_cmc_universe_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
@@ -136,6 +176,7 @@ class CmcUniverse(Base):
     cmc_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     in_top600: Mapped[bool] = mapped_column(Boolean, default=False)
     on_binance: Mapped[bool] = mapped_column(Boolean, default=False)
+    on_aster: Mapped[bool] = mapped_column(Boolean, default=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
@@ -152,8 +193,10 @@ class CmcFieldDetail(Base):
     table is readable/browsable on its own without joining back to
     cmc_universe -- distinct from the field_type="social" field_name=
     "cmc_url" row above, which exists for the field-by-field enumeration
-    pattern that build_field_contrast/gap_details read. Rows pulled
-    before this column existed have it NULL until their coin's next pull."""
+    pattern that build_field_contrast/gap_details read. A cmc_id's rows
+    are deleted (not just left stale) once it drops out of cmc_universe
+    entirely -- see build_cmc_universe.py, which does that pruning on
+    every run."""
 
     __tablename__ = "cmc_field_details"
     __table_args__ = (Index("ix_cmc_field_details_cmc_id_type_name", "cmc_id", "field_type", "field_name"),)
@@ -180,8 +223,9 @@ class CgFieldDetail(Base):
     catalog page onto every row, same rationale and same-value-per-cg_id
     convention as CmcFieldDetail's -- CoinGecko has no per-field
     equivalent of CMC's cmc_url row, so this is that side's only place to
-    find its own catalog link. Rows pulled before this column existed
-    have it NULL until their coin's next pull."""
+    find its own catalog link. A cg_id's rows are deleted (not just left
+    stale) once its mapped cmc_id drops out of cmc_universe entirely --
+    see build_cmc_universe.py, which does that pruning on every run."""
 
     __tablename__ = "cg_field_details"
     __table_args__ = (Index("ix_cg_field_details_cg_id_type_name", "cg_id", "field_type", "field_name"),)

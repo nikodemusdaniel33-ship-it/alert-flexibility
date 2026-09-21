@@ -12,21 +12,25 @@ including coins only tradeable as a perpetual (Binance's perpetual
 listings include tokenized-stock contracts like AAPL/ADBE alongside
 crypto, all still carrying a normal CMC id).
 
-Names for coins already in cmc_top600's latest batch (run scripts/pull_top600
-first for best results) come from that table for free; for the rest --
-Binance-listed coins outside the top-N pull -- one extra CMC detail call
-each. Append-only, same convention as pull_top600.py: every run inserts a
-new batch sharing one fetched_at, rather than replacing the table.
+Names for coins already in cmc_top600's current snapshot (run
+scripts/pull_top600 first for best results) come from that table for
+free; for the rest -- Binance-listed coins outside the top-N pull -- one
+extra CMC detail call each. Replace semantics, same convention as
+pull_top600.py: every run deletes all existing cmc_binance_listed rows
+and inserts the fresh union, so the table always holds a single current
+snapshot -- no batch history (converted from append-only 2026-09-21).
+
+Calls scripts.build_cmc_universe.run() at the end, same reason as
+pull_top600.py.
 """
 
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import func
-
 from app.criteria.market_universe import fetch_cmc_binance_listed_ids, fetch_cmc_info
 from app.db import SessionLocal, ensure_schema
 from app.market_data.models import CmcBinanceListed, CmcTop600
+from scripts.build_cmc_universe import run as rebuild_universe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pull_binance_listed")
@@ -37,21 +41,17 @@ def run() -> None:
 
     log.info("Fetching CMC-listed coins currently on Binance (spot + perpetual + futures)...")
     binance_ids = fetch_cmc_binance_listed_ids()
-    batch_time = datetime.now(timezone.utc)
+    fetched_at = datetime.now(timezone.utc)
 
     db = SessionLocal()
     try:
-        latest_top600_at = db.query(func.max(CmcTop600.fetched_at)).scalar()
-        top600_by_id = (
-            {row.cmc_id: row for row in db.query(CmcTop600).filter(CmcTop600.fetched_at == latest_top600_at)}
-            if latest_top600_at
-            else {}
-        )
+        top600_by_id = {row.cmc_id: row for row in db.query(CmcTop600)}
         missing_ids = [cid for cid in binance_ids if str(cid) not in top600_by_id]
         if missing_ids:
             log.info("%d coins not in cmc_top600 -- fetching names individually", len(missing_ids))
         info = fetch_cmc_info(missing_ids) if missing_ids else {}
 
+        db.query(CmcBinanceListed).delete()
         for cid, meta in binance_ids.items():
             cid_str = str(cid)
             top = top600_by_id.get(cid_str)
@@ -72,7 +72,7 @@ def run() -> None:
                     is_spot=meta["is_spot"],
                     is_perpetual=meta["is_perpetual"],
                     is_futures=meta["is_futures"],
-                    fetched_at=batch_time,
+                    fetched_at=fetched_at,
                 )
             )
         db.commit()
@@ -80,15 +80,17 @@ def run() -> None:
         perp_n = sum(1 for m in binance_ids.values() if m["is_perpetual"])
         fut_n = sum(1 for m in binance_ids.values() if m["is_futures"])
         log.info(
-            "cmc_binance_listed: %d coins (%d spot, %d perpetual, %d futures) (batch %s)",
+            "cmc_binance_listed: %d coins (%d spot, %d perpetual, %d futures) (snapshot %s)",
             len(binance_ids),
             spot_n,
             perp_n,
             fut_n,
-            batch_time.isoformat(),
+            fetched_at.isoformat(),
         )
     finally:
         db.close()
+
+    rebuild_universe()
 
 
 if __name__ == "__main__":

@@ -307,10 +307,10 @@ def fetch_cmc_info(ids: list[int]) -> dict[int, dict]:
     return out
 
 
-def _fetch_cmc_binance_category_ids(category: str) -> dict[int, dict]:
+def _fetch_cmc_exchange_category_ids(exchange_slug: str, category: str) -> dict[int, dict]:
     """{cmc_id: {symbol, slug}} for every base currency CMC lists under one
-    market-pairs category (spot | perpetual | futures) for Binance, via
-    CMC's public site API (see module-level comment on
+    market-pairs category (spot | perpetual | futures) for the given
+    exchange, via CMC's public site API (see module-level comment on
     CMC_PUBLIC_MARKET_PAIRS_URL for why not the documented endpoint)."""
     ids: dict[int, dict] = {}
     start = 1
@@ -318,7 +318,7 @@ def _fetch_cmc_binance_category_ids(category: str) -> dict[int, dict]:
     while True:
         resp = get_with_retry(
             CMC_PUBLIC_MARKET_PAIRS_URL,
-            params={"slug": BINANCE_SLUG, "category": category, "start": start, "limit": limit, "convert": "USD"},
+            params={"slug": exchange_slug, "category": category, "start": start, "limit": limit, "convert": "USD"},
             headers={"Accept": "application/json"},
             timeout=30,
         )
@@ -333,6 +333,10 @@ def _fetch_cmc_binance_category_ids(category: str) -> dict[int, dict]:
     return ids
 
 
+def _fetch_cmc_binance_category_ids(category: str) -> dict[int, dict]:
+    return _fetch_cmc_exchange_category_ids(BINANCE_SLUG, category)
+
+
 def fetch_cmc_binance_spot_ids() -> dict[int, dict]:
     """{cmc_id: {symbol, slug}} for every coin CMC lists as spot-traded on
     Binance -- used by MarketUniverseProvider (live auto-tracking, see
@@ -345,22 +349,38 @@ def fetch_cmc_binance_spot_ids() -> dict[int, dict]:
     return _fetch_cmc_binance_category_ids("spot")
 
 
-def fetch_cmc_binance_listed_ids() -> dict[int, dict]:
+def _fetch_cmc_exchange_listed_ids(exchange_slug: str) -> dict[int, dict]:
     """{cmc_id: {symbol, slug, is_spot, is_perpetual, is_futures}} for
-    every coin CMC lists as tradeable on Binance across spot, perpetual,
-    and futures market pairs -- the union, deduplicated by cmc_id (a coin
-    listed under more than one category appears once, with a flag per
-    category it was actually found under -- not mutually exclusive, most
-    spot coins are also perpetual). Used by scripts/pull_binance_listed.py
-    for the reference pipeline; NOT used by the live worker's
-    auto-tracking (see fetch_cmc_binance_spot_ids, which stays spot-only
-    on purpose)."""
+    every coin CMC lists as tradeable on the given exchange across spot,
+    perpetual, and futures market pairs -- the union, deduplicated by
+    cmc_id (a coin listed under more than one category appears once, with
+    a flag per category it was actually found under -- not mutually
+    exclusive, most spot coins are also perpetual)."""
     ids: dict[int, dict] = {}
     for category in ("spot", "perpetual", "futures"):
-        for cid, info in _fetch_cmc_binance_category_ids(category).items():
+        for cid, info in _fetch_cmc_exchange_category_ids(exchange_slug, category).items():
             entry = ids.setdefault(cid, {**info, "is_spot": False, "is_perpetual": False, "is_futures": False})
             entry[f"is_{category}"] = True
     return ids
+
+
+def fetch_cmc_binance_listed_ids() -> dict[int, dict]:
+    """Same shape as _fetch_cmc_exchange_listed_ids, for Binance. Used by
+    scripts/pull_binance_listed.py for the reference pipeline; NOT used by
+    the live worker's auto-tracking (see fetch_cmc_binance_spot_ids, which
+    stays spot-only on purpose)."""
+    return _fetch_cmc_exchange_listed_ids(BINANCE_SLUG)
+
+
+ASTER_SLUG = "aster-pro"
+
+
+def fetch_cmc_aster_listed_ids() -> dict[int, dict]:
+    """Same shape as fetch_cmc_binance_listed_ids, for the Aster DEX (CMC
+    exchange slug "aster-pro", verified against CMC's exchange-scoped
+    market-pairs endpoint). Used by scripts/pull_aster_listed.py for the
+    reference pipeline; not used anywhere in live auto-tracking."""
+    return _fetch_cmc_exchange_listed_ids(ASTER_SLUG)
 
 
 def _coingecko_headers() -> dict[str, str]:

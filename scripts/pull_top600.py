@@ -2,12 +2,17 @@
 (`python -m scripts.pull_top600 [--top-n 600]`).
 
 Uses the same key-free CMC listing call as app/criteria/market_universe.py
-(MARKET_UNIVERSE_TOP_N / --top-n controls N, default 600). Append-only:
-every run inserts a new batch of rows sharing one fetched_at timestamp,
-rather than replacing the table. Meant to run daily via a Railway cron
-service -- see the market-data-cron service's cronSchedule. Readers that
-want the current snapshot (e.g. app.main's /market-data) filter to the
-latest fetched_at themselves.
+(MARKET_UNIVERSE_TOP_N / --top-n controls N, default 600). Replace
+semantics: every run deletes all existing cmc_top600 rows and inserts the
+fresh top-N, so the table always holds a single current snapshot -- no
+batch history (converted from append-only 2026-09-21, alongside
+cmc_binance_listed/cmc_aster_listed). Meant to run daily via a Railway
+cron service -- see the market-data-cron service's cronSchedule.
+
+Calls scripts.build_cmc_universe.run() at the end, so cmc_universe stays
+current even if this script is ever run standalone (outside the daily
+chain) -- see that module's docstring for why a direct Python call was
+chosen over a DB trigger.
 """
 
 import argparse
@@ -18,6 +23,7 @@ from app.config import settings
 from app.criteria.market_universe import fetch_cmc_universe
 from app.db import SessionLocal, ensure_schema
 from app.market_data.models import CmcTop600
+from scripts.build_cmc_universe import run as rebuild_universe
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("pull_top600")
@@ -29,10 +35,11 @@ def run(top_n: int | None = None) -> None:
 
     log.info("Fetching top-%d CMC coins by market cap...", top_n)
     coins = fetch_cmc_universe(top_n)
-    batch_time = datetime.now(timezone.utc)
+    fetched_at = datetime.now(timezone.utc)
 
     db = SessionLocal()
     try:
+        db.query(CmcTop600).delete()
         for coin in coins:
             db.add(
                 CmcTop600(
@@ -41,13 +48,15 @@ def run(top_n: int | None = None) -> None:
                     symbol=coin["symbol"],
                     slug=coin.get("slug"),
                     cmc_rank=coin["cmc_rank"],
-                    fetched_at=batch_time,
+                    fetched_at=fetched_at,
                 )
             )
         db.commit()
-        log.info("cmc_top600: %d coins (batch %s)", len(coins), batch_time.isoformat())
+        log.info("cmc_top600: %d coins (snapshot %s)", len(coins), fetched_at.isoformat())
     finally:
         db.close()
+
+    rebuild_universe()
 
 
 if __name__ == "__main__":

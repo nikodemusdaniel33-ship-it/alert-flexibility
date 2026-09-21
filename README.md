@@ -150,9 +150,9 @@ A separate set of tables and scripts for building a reviewed, stable
 CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 
 - `app/market_data/models.py` — `cmc_cg_mapping`, `cmc_top600`,
-  `cmc_binance_listed`, `cmc_universe`, `cmc_field_details`,
-  `cg_field_details`, `coin_field_contrast`, `gap_details`,
-  `detail_pull_failures`.
+  `cmc_binance_listed`, `cmc_aster_listed`, `cmc_universe`,
+  `cmc_field_details`, `cg_field_details`, `coin_field_contrast`,
+  `gap_details`, `detail_pull_failures`.
 - `data/cmc_cg_mapping.csv` (+ `data/cmc_cg_unmatched.csv`) — a
   human-reviewed CMC↔CoinGecko mapping export. Its `valid` column marks
   confidently-matched rows (contract address or a unique symbol) versus
@@ -163,14 +163,13 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 - `python -m scripts.pull_top600 [--top-n 600]` — snapshots the current
   top-N CMC coins by market cap into `cmc_top600`, including each coin's
   `slug` (CMC's own URL slug, carried through purely so `build_cmc_universe`
-  can derive `cmc_url` below with no extra API call). **Append-only**: each
-  run inserts a new batch of rows sharing one `fetched_at` timestamp
-  rather than replacing the table, so history is kept. Readers wanting
-  the current snapshot filter to `MAX(fetched_at)` (see `/market-data`
-  in `app/main.py`).
+  can derive `cmc_url` below with no extra API call). **Replace
+  semantics**: every run deletes all existing rows and inserts the fresh
+  top-N, so the table always holds a single current snapshot — no batch
+  history (converted from append-only 2026-09-21).
 - `python -m scripts.pull_binance_listed` — snapshots CMC-listed coins
   currently tradeable on Binance into `cmc_binance_listed` (`slug`
-  included, same reason as above), same append-only convention. Unions
+  included, same reason as above), same replace convention. Unions
   spot, perpetual, and futures market pairs, deduplicated by `cmc_id` (a
   coin listed under more than one category still gets exactly one row,
   with `is_spot`/`is_perpetual`/`is_futures` flagging which) — broader on
@@ -178,30 +177,60 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
   above, which stays spot-only (Binance's perpetual listings include
   tokenized-stock contracts like AAPL/ADBE alongside crypto, not
   something to auto-track/alert on). Reuses names from `cmc_top600`'s
-  *latest* batch where possible; run `pull_top600` first for fewer API
+  current snapshot where possible; run `pull_top600` first for fewer API
   calls.
-- `python -m scripts.build_cmc_universe` — unions `cmc_top600`'s and
-  `cmc_binance_listed`'s latest batches into `cmc_universe`: one row per
-  CMC id tracked by either source, with `in_top600`/`on_binance` flags
-  saying why (`on_binance` is true under any of spot/perpetual/futures —
-  see `cmc_binance_listed`'s own `is_spot`/`is_perpetual`/`is_futures`
-  for the per-category breakdown), plus `cmc_url` (CMC's own catalog page
-  for the coin, derived from whichever source's `slug` is available —
-  not fetched). Reads those two tables only, no CMC API calls of its
-  own; run after both. **Replace semantics**, same as `cmc_field_details`/
-  `cg_field_details`/`coin_field_contrast`/`gap_details`: every run
-  recomputes the full universe and replaces the table's contents, so it
-  always holds a single current snapshot (no batching, no history) —
-  `fetched_at` is just "when this snapshot was last built". Doesn't
-  replace either source table or `/market-data` (which keeps reading
-  `cmc_top600`/`cmc_binance_listed` directly) -- it's a single place to
-  answer "is this CMC id currently tracked, and why."
+- `python -m scripts.pull_aster_listed` — same as `pull_binance_listed`,
+  against the Aster DEX instead (CMC exchange slug `aster-pro`). Not used
+  by any live auto-tracking, purely a third source feeding `cmc_universe`.
+- `python -m scripts.build_cmc_universe` — unions `cmc_top600`'s,
+  `cmc_binance_listed`'s, and `cmc_aster_listed`'s current snapshots into
+  `cmc_universe`: one row per CMC id tracked by any of the three, with
+  `in_top600`/`on_binance`/`on_aster` flags saying why (`on_binance`/
+  `on_aster` are true under any of spot/perpetual/futures — see each
+  source table's own `is_spot`/`is_perpetual`/`is_futures` for the
+  per-category breakdown), plus `cmc_url` (CMC's own catalog page for the
+  coin, derived from whichever source's `slug` is available — not
+  fetched; precedence `cmc_top600` > `cmc_binance_listed` >
+  `cmc_aster_listed` for name/symbol/rank/slug when a coin is in more
+  than one). Reads those three tables only, no CMC API calls of its own.
+  **Replace semantics**, same as `cmc_field_details`/`cg_field_details`/
+  `coin_field_contrast`/`gap_details`: every run recomputes the full
+  universe and replaces the table's contents, so it always holds a
+  single current snapshot (no batching, no history) — `fetched_at` is
+  just "when this snapshot was last built". A coin absent from all three
+  sources simply has no row afterward (not a row with every flag false —
+  a coin nothing currently tracks has no reason for a row to exist; the
+  alternative would make `full_detail_pull` keep spending CMC/CoinGecko
+  API calls on delisted coins forever). To match, every run also deletes
+  any `cmc_field_details`/`cg_field_details` rows whose `cmc_id`/`cg_id`
+  no longer corresponds to a row in the freshly rebuilt `cmc_universe`,
+  so those tables don't accumulate orphaned rows for coins that fell out.
+  Doesn't replace any source table or `/market-data` (which keeps
+  reading `cmc_top600`/`cmc_binance_listed` directly) -- it's a single
+  place to answer "is this CMC id currently tracked, and why."
 
-Both `pull_top600` and `pull_binance_listed` run daily via a dedicated Railway cron service (`market-data-cron`,
+  **Called automatically**, not just via the daily chain: `pull_top600`,
+  `pull_binance_listed`, and `pull_aster_listed` each call
+  `build_cmc_universe.run()` directly (plain Python function call) at the
+  end of their own `run()`, so `cmc_universe` stays current even if one
+  of those three is ever run standalone — not just when the daily chain
+  completes. Safe to call redundantly (idempotent full recompute,
+  sub-second, no API calls) — a normal daily run ends up calling it up to
+  four times (once per pull script, plus once explicitly at the end of
+  the chain below) and that's fine. A plain Postgres trigger (reacting to
+  `INSERT`s on the three source tables) was considered instead but
+  rejected: it would need the same union logic reimplemented in
+  PL/pgSQL, a second copy that could silently drift from this one —
+  calling the existing Python function directly keeps a single
+  implementation and zero sync risk.
+
+`pull_top600`, `pull_binance_listed`, and `pull_aster_listed` all run
+daily via a dedicated Railway cron service (`market-data-cron`,
 `cronSchedule: 0 2 * * *`, `restartPolicyType: NEVER`) rather than
 continuously — Railway only starts its container at the scheduled tick,
-not on deploy. The `/market-data` dashboard page always shows the latest
-batch, with a "last fetched" timestamp per tab.
+not on deploy. The `/market-data` dashboard page shows the current
+`cmc_top600`/`cmc_binance_listed` snapshot, with a "last fetched"
+timestamp per tab.
 - `python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]` — pulls
   CMC detail for **every** coin in `cmc_universe`'s current snapshot (no
   CoinGecko id needed for that side) into `cmc_field_details`, and
@@ -255,10 +284,11 @@ batch, with a "last fetched" timestamp per tab.
   contract address is.
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
-→ `build_cmc_universe` → `full_detail_pull` → `build_field_contrast`.
-`full_detail_pull` reads its coin list from `cmc_universe`'s current
-snapshot, so `build_cmc_universe` must run before it now (it used to read
-`cmc_top600`/`cmc_binance_listed` directly).
+→ `pull_aster_listed` → `full_detail_pull` → `build_field_contrast`.
+`build_cmc_universe` doesn't need a separate step in this order anymore —
+each of the three pull scripts calls it automatically at the end of its
+own run, so `cmc_universe` is already current by the time
+`full_detail_pull` (which reads its coin list from `cmc_universe`) runs.
 
 ## Other standalone scripts
 

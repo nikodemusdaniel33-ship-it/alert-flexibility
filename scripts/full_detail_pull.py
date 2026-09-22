@@ -42,6 +42,19 @@ A fetch failure -- CMC or CoinGecko -- is recorded in detail_pull_failures
 enough that its own run logs have proven unreliable to rely on after the
 fact (see README). That table tracks CURRENTLY outstanding failures only:
 a coin's row there is cleared the moment its fetch succeeds again.
+
+Every coin with a resolved cg_id also gets scripts.build_field_contrast
+run for it (cmc_id-scoped) right after its cmc_field_details/
+cg_field_details rows are committed -- a direct Python call, not a DB
+trigger (same reasoning as scripts.build_cmc_universe's docstring: a
+trigger would need the comparison logic reimplemented in SQL, a second
+copy that could drift from this one). Deferred until just after each
+periodic commit (not called inline per coin) because build_field_contrast
+opens its own DB session -- calling it before this run's own commit would
+have it read stale, pre-this-run data across that separate connection.
+This means coin_field_contrast/gap_details are never more than one
+PROGRESS_EVERY batch behind cmc_field_details/cg_field_details, even if
+this run is limited, filtered to one coin, or interrupted partway.
 """
 
 import argparse
@@ -61,6 +74,7 @@ from app.chain_align import CG_SLUG_TO_INTERNAL, EXPLORER_DOMAIN_TO_CHAIN_HINT
 from app.db import SessionLocal, ensure_schema
 from app.detail_compare import _cg_links, _cmc_urls, _first
 from app.market_data.models import CgFieldDetail, CmcCgMapping, CmcFieldDetail, CmcUniverse, DetailPullFailure
+from scripts import build_field_contrast
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("full_detail_pull")
@@ -280,6 +294,8 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
             with_cg,
         )
 
+        pending_contrast_ids: list[str] = []
+
         for i, cid in enumerate(targets, start=1):
             m = mappings.get(cid)
             cg_id = m.cg_id if (m and m.valid and m.cg_id) else None
@@ -308,6 +324,7 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
                     _clear_failure(db, "cg", cid)
                     db.query(CgFieldDetail).filter(CgFieldDetail.cg_id == cg_id).delete(synchronize_session=False)
                     db.add_all(_cg_rows(cg_id, raw_cg, pulled_at))
+                pending_contrast_ids.append(cid)
 
             if i < len(targets):
                 time.sleep(CMC_DETAIL_REQUEST_DELAY_SECONDS)
@@ -315,9 +332,14 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
             if i % PROGRESS_EVERY == 0:
                 db.commit()
                 log.info("  %d/%d coins pulled", i, len(targets))
+                for pcid in pending_contrast_ids:
+                    build_field_contrast.run(cmc_id=pcid)
+                pending_contrast_ids = []
 
         db.commit()
-        log.info("Done: cmc_field_details/cg_field_details updated for %d coins", len(targets))
+        for pcid in pending_contrast_ids:
+            build_field_contrast.run(cmc_id=pcid)
+        log.info("Done: cmc_field_details/cg_field_details/coin_field_contrast/gap_details updated for %d coins", len(targets))
     finally:
         db.close()
 

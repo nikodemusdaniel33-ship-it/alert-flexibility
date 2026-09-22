@@ -258,6 +258,21 @@ timestamp per tab.
   unreliable after the fact — that table tracks currently outstanding
   failures only, cleared the moment a coin's fetch succeeds again.
 
+  **Also calls `build_field_contrast` automatically**, same pattern as
+  `build_cmc_universe` above (direct Python call, not a DB trigger): every
+  coin with a resolved `cg_id` gets `build_field_contrast.run(cmc_id=...)`
+  called for it right after its `cmc_field_details`/`cg_field_details`
+  rows are committed — deferred to just after each periodic commit (not
+  inline per coin), since `build_field_contrast` opens its own DB session
+  and would otherwise read stale, pre-this-run data across that separate
+  connection. This means `coin_field_contrast`/`gap_details` are never
+  more than one batch behind, even for a `--limit`/`--cmc-id` run or one
+  interrupted partway — no separate manual step needed to keep them
+  current relative to whenever `full_detail_pull` last ran. (This does
+  *not* put `full_detail_pull` itself on a schedule — it still only runs
+  on demand, deliberately, to stay within the CoinGecko API budget; see
+  `COINGECKO_API_KEY` below.)
+
 - `python -m scripts.build_field_contrast [--cmc-id ID]` — for every coin
   with a valid mapping and existing `cmc_field_details`/`cg_field_details`
   rows, computes a contrast snapshot into `coin_field_contrast`: reads
@@ -284,11 +299,14 @@ timestamp per tab.
   contract address is.
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
-→ `pull_aster_listed` → `full_detail_pull` → `build_field_contrast`.
-`build_cmc_universe` doesn't need a separate step in this order anymore —
-each of the three pull scripts calls it automatically at the end of its
-own run, so `cmc_universe` is already current by the time
-`full_detail_pull` (which reads its coin list from `cmc_universe`) runs.
+→ `pull_aster_listed` → `full_detail_pull`. Neither `build_cmc_universe`
+nor `build_field_contrast` needs a separate step anymore — each of the
+three pull scripts calls `build_cmc_universe` automatically at the end of
+its own run, and `full_detail_pull` calls `build_field_contrast`
+automatically per coin as it goes, so `cmc_universe` is already current
+by the time `full_detail_pull` runs, and `coin_field_contrast`/
+`gap_details` are already current by the time `full_detail_pull`
+finishes.
 
 ## Other standalone scripts
 

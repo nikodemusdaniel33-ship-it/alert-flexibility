@@ -268,6 +268,42 @@ call → `pull_bybit_listed` → `pull_okx_listed` →
 `create_coins_with_gaps_view` → `create_dashboard_views` → a verification
 query printing `universe_overview`), then daily chain + cron restored.
 
+**Operational lesson learned mid-rollout, worth repeating for any future
+one-off run on this service:** a `market-data-cron` deployment's reported
+status can go `SUCCESS` within seconds — long before a multi-minute
+script (hundreds of individual per-coin CMC detail calls) has actually
+finished running inside that same container. This is the same
+log-freezing behavior `full_detail_pull`'s docstring already warns
+about, but it turned out to affect the *deployment status* too, not just
+the log stream. Triggering a second one-off run (even a lightweight,
+read-only verification query) via `connect-service-source` while
+trusting that premature `SUCCESS` **replaces/kills the still-running
+first container** — this actually happened here: the first rollout
+attempt's `SUCCESS` showed at ~7 seconds in, a "verification" run was
+started on top of it, and the real backfill was still mid-flight
+(`cmc_bybit_listed` had committed 802 rows, but `pull_okx_listed` had
+barely started and the view-rebuild scripts never ran at all — confirmed
+by `cmc_okx_listed` sitting at 0 rows and `universe_overview` still
+missing the new columns immediately after). Fixed by re-running the full
+chain once more and this time waiting several real minutes (not just
+checking `list-deployments` status) before doing anything else with the
+service, watching for the run's own final log line rather than the
+deployment status. **Rule of thumb: for this service, don't trust
+`SUCCESS` alone and don't start another deployment on it until you have
+independent evidence (a DB query, or the job's own final print
+statement in the logs) that the previous one-off run has actually
+finished** — the deployment status here answers "did the container
+start," not "did the script exit."
+
+Final verified production state after the real completion: `cmc_universe`
+1269 coins total (600 top600, 854 binance, 587 aster, 802 bybit, 606
+okx, 192 in all five sources, 857 CoinGecko-mapped);
+`cmc_bybit_listed` 802 (398 spot, 711 perpetual, 8 futures);
+`cmc_okx_listed` 606 (365 spot, 452 perpetual, 182 futures). All 7 views
+recreated successfully with the new `on_bybit`/`on_okx`/`all_five_count`
+columns. Daily cron (`0 2 * * *`) and the permanent 6-command
+`startCommand` restored afterward.
+
 Created this file (`ENGINEERING.md`) in the same push, per explicit
 request: a standing log any AI session should read first and update on
 every future change.

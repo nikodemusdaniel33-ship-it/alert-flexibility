@@ -135,6 +135,36 @@ See `README.md`'s "Market-data reference pipeline" section for the full
 per-script breakdown, exact columns, and run order — kept current there
 rather than duplicated here.
 
+### Manual, on-demand operations (not on any schedule)
+
+Two things in this pipeline are deliberately kept off `market-data-cron`'s
+daily chain, triggered manually instead:
+
+- **`full_detail_pull.py`** itself (full mode, no flags) — pulls both
+  CMC's and CoinGecko's sides. Off-schedule to protect CoinGecko's free
+  tier (see `COINGECKO_API_KEY`).
+- **`scripts/full_cmc_refresh.py`** — a thinner, CMC-only version, safe
+  to trigger far more often since it makes zero CoinGecko calls: chains
+  all 5 pull scripts → `build_cmc_universe` → `full_detail_pull(cmc_only=True)`.
+  The `cmc_only` mode (a `full_detail_pull.run()`/CLI parameter, not a
+  separate script) skips the CoinGecko fetch and `cg_field_details`
+  write per coin, but still cascades `build_field_contrast`/`gap_details`
+  for every validly-mapped coin — comparing the freshly-pulled CMC data
+  against whatever `cg_field_details` already holds from a previous full
+  run, not a fresh CoinGecko pull. This was a deliberate design choice
+  (2026-09-22, see changelog): the alternative — skipping the
+  contrast/gap cascade entirely in `cmc_only` mode — was considered and
+  rejected, since `build_field_contrast` doesn't care whether
+  `cg_field_details` is fresh or stale, just that it exists; refreshing
+  contrast/gaps against last-known CG data is still strictly more useful
+  than leaving them un-refreshed.
+
+Both are triggered the same way: manually, via the startCommand-hijack
+pattern on `market-data-cron` (see "Production operations" below) or
+locally. Neither has its own Railway service or `cronSchedule` — if one
+ever needs to become scheduled, that's a deliberate future decision, not
+an accidental default.
+
 ### Key design decisions (with rationale)
 
 - **Cascade via direct Python function call, never a DB trigger.** Every
@@ -237,6 +267,41 @@ containers; the MCP tools authenticate independently).
 
 Newest first. Each entry: what changed, why, and anything a future
 session needs to know that isn't obvious from the code/README alone.
+
+### 2026-09-22 — full_detail_pull --cmc-only + scripts/full_cmc_refresh.py
+
+Added a `cmc_only` parameter/`--cmc-only` flag to `full_detail_pull.py`
+and a new orchestrator script, `scripts/full_cmc_refresh.py`, explicit
+user request for a manually-triggered (not scheduled) chain: refresh
+every `cmc_*_listed` table → `cmc_universe` → `cmc_field_details` →
+`coin_field_contrast`/`gap_details`, all without touching CoinGecko.
+
+The one design decision worth flagging: in `--cmc-only` mode,
+`coin_field_contrast`/`gap_details` still get refreshed for every
+validly-mapped coin, using whatever `cg_field_details` already holds
+from a previous full run — not skipped just because the CoinGecko side
+wasn't re-fetched this time. Implemented by moving
+`pending_contrast_ids.append(cid)` outside the CoinGecko-fetch-attempt
+block so it fires whenever a coin has a resolved `cg_id`, regardless of
+whether this run actually called CoinGecko for it. This is a genuine
+answer to "did CMC's data change" even when CoinGecko's last-known data
+is a day or a week old — the two sides move independently, so comparing
+fresh-CMC-vs-stale-CG is still meaningful, not a degraded no-op.
+
+Tested locally: confirmed `fetch_cg_detail_raw` is never called in
+`--cmc-only` mode; confirmed a coin with pre-existing (stale)
+`cg_field_details` still gets a correct contrast row computed against
+that stale data; confirmed a mapped coin with *zero* prior CG pull still
+gets a contrast run without erroring (all `cg_value`s just read as
+absent); confirmed an unmapped coin is still correctly skipped for
+contrast; confirmed `full_cmc_refresh.run()` chains all 6 steps
+end-to-end with zero CoinGecko calls.
+
+Not yet applied to production as of this entry — code committed and
+pushed to `main`, not yet run via the startCommand-hijack pattern. A
+future session (or this one, later) should run
+`python -m scripts.full_cmc_refresh` on `market-data-cron` when the user
+next wants a full CMC-side refresh, and update this entry once done.
 
 ### 2026-09-22 — Add Bybit and OKX as 4th/5th exchange sources
 

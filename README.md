@@ -268,6 +268,18 @@ starts its container at the scheduled tick, not on deploy. The
   unreliable after the fact — that table tracks currently outstanding
   failures only, cleared the moment a coin's fetch succeeds again.
 
+  `--cmc-only` skips the CoinGecko fetch (and `cg_field_details` write)
+  entirely, refreshing just `cmc_field_details` — CMC's public detail API
+  has no meaningful rate-limit budget to protect, unlike CoinGecko's free
+  tier (the reason this whole script otherwise stays off any schedule).
+  A `--cmc-only` run still cascades `build_field_contrast`/`gap_details`
+  for every validly-mapped coin (see below) — it compares the
+  freshly-refreshed CMC side against whatever `cg_field_details` already
+  holds from a previous run, not a fresh CoinGecko pull. See
+  `scripts/full_cmc_refresh.py` below for the manual, on-demand chain
+  that runs this in `--cmc-only` mode after refreshing every
+  `cmc_universe` source table first.
+
   **Also calls `build_field_contrast` automatically**, same pattern as
   `build_cmc_universe` above (direct Python call, not a DB trigger): every
   coin with a resolved `cg_id` gets `build_field_contrast.run(cmc_id=...)`
@@ -281,7 +293,24 @@ starts its container at the scheduled tick, not on deploy. The
   current relative to whenever `full_detail_pull` last ran. (This does
   *not* put `full_detail_pull` itself on a schedule — it still only runs
   on demand, deliberately, to stay within the CoinGecko API budget; see
-  `COINGECKO_API_KEY` below.)
+  `COINGECKO_API_KEY` below.) This cascade fires the same way in
+  `--cmc-only` mode — a resolved `cg_id` is enough to trigger it,
+  regardless of whether this run actually re-fetched that coin's
+  CoinGecko side.
+- `python -m scripts.full_cmc_refresh` — manual, on-demand full CMC-side
+  refresh, **not on any schedule** (unlike the five pull scripts' own
+  daily chain on `market-data-cron`). Chains, in order: `pull_top600` →
+  `pull_binance_listed` → `pull_aster_listed` → `pull_bybit_listed` →
+  `pull_okx_listed` → `build_cmc_universe` → `full_detail_pull --cmc-only`.
+  Exists so `cmc_field_details`/`coin_field_contrast`/`gap_details` can be
+  refreshed as often as wanted without spending any CoinGecko API budget
+  — every source table and `cmc_field_details` get a fresh pull, and
+  `coin_field_contrast`/`gap_details` are recomputed against whatever
+  `cg_field_details` currently holds. Trigger it manually (locally, or
+  via the `market-data-cron` service's startCommand-hijack pattern — see
+  `ENGINEERING.md`) whenever a full CMC-side refresh is wanted. For a run
+  that also refreshes `cg_field_details` from CoinGecko, run
+  `python -m scripts.full_detail_pull` directly instead (no `--cmc-only`).
 
 - `python -m scripts.build_field_contrast [--cmc-id ID]` — for every coin
   with a valid mapping and existing `cmc_field_details`/`cg_field_details`

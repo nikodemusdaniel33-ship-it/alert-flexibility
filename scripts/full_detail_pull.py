@@ -1,7 +1,22 @@
 """Pull raw CMC and CoinGecko field values for coins in cmc_universe's
 current snapshot into two separate tables -- cmc_field_details and
 cg_field_details (`python -m scripts.full_detail_pull [--limit N]
-[--cmc-id ID]`).
+[--cmc-id ID] [--cmc-only]`).
+
+`--cmc-only` skips the CoinGecko fetch (and cg_field_details write)
+entirely, refreshing just cmc_field_details -- CMC's side has no
+meaningful rate-limit budget to protect (see CMC_DETAIL_REQUEST_DELAY_SECONDS,
+a plain courtesy delay, not a rate-limit response), unlike CoinGecko's
+free tier, which is why this whole script stays off any schedule
+otherwise. A `--cmc-only` run still cascades build_field_contrast/
+gap_details for every validly-mapped coin (see below) -- it compares the
+freshly-refreshed CMC side against whatever cg_field_details already
+holds from a previous run, not against a fresh CoinGecko pull. That's a
+deliberate, useful thing to do on its own (CMC data moves independently
+of CoinGecko's), not a degraded version of a full run. See
+scripts/full_cmc_refresh.py for the manual, on-demand chain that runs
+this in --cmc-only mode after refreshing every cmc_universe source
+table.
 
 CMC detail is pulled for EVERY coin in cmc_universe, whether or not it
 has a resolved CoinGecko id -- CMC's own data doesn't need one.
@@ -54,7 +69,10 @@ opens its own DB session -- calling it before this run's own commit would
 have it read stale, pre-this-run data across that separate connection.
 This means coin_field_contrast/gap_details are never more than one
 PROGRESS_EVERY batch behind cmc_field_details/cg_field_details, even if
-this run is limited, filtered to one coin, or interrupted partway.
+this run is limited, filtered to one coin, or interrupted partway. This
+cascade fires the same way in `--cmc-only` mode -- a resolved cg_id is
+enough to trigger it, regardless of whether this run actually re-fetched
+that coin's CoinGecko side.
 """
 
 import argparse
@@ -269,7 +287,7 @@ def _clear_failure(db, source: str, cmc_id: str) -> None:
     db.query(DetailPullFailure).filter(DetailPullFailure.source == source, DetailPullFailure.cmc_id == cmc_id).delete(synchronize_session=False)
 
 
-def run(limit: int | None = None, cmc_id: str | None = None) -> None:
+def run(limit: int | None = None, cmc_id: str | None = None, cmc_only: bool = False) -> None:
     ensure_schema()
     db = SessionLocal()
     try:
@@ -287,12 +305,20 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
 
         targets = cmc_ids
         with_cg = sum(1 for cid in targets if mappings.get(cid) and mappings[cid].valid and mappings[cid].cg_id)
-        log.info(
-            "Pulling CMC detail for %d coins (%d of those also get CoinGecko detail, valid mapping); "
-            "replaces each coin's existing rows",
-            len(targets),
-            with_cg,
-        )
+        if cmc_only:
+            log.info(
+                "Pulling CMC detail only for %d coins (--cmc-only: no CoinGecko fetch); "
+                "%d of those still get coin_field_contrast/gap_details refreshed against their existing CoinGecko data",
+                len(targets),
+                with_cg,
+            )
+        else:
+            log.info(
+                "Pulling CMC detail for %d coins (%d of those also get CoinGecko detail, valid mapping); "
+                "replaces each coin's existing rows",
+                len(targets),
+                with_cg,
+            )
 
         pending_contrast_ids: list[str] = []
 
@@ -314,7 +340,12 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
             db.query(CmcFieldDetail).filter(CmcFieldDetail.cmc_id == cid).delete(synchronize_session=False)
             db.add_all(_cmc_rows(cid, raw_cmc, pulled_at))
 
-            if cg_id:
+            if cg_id and cmc_only:
+                # CoinGecko fetch skipped entirely -- still queued for the
+                # contrast/gap cascade below, against whatever
+                # cg_field_details already holds from a previous run.
+                pending_contrast_ids.append(cid)
+            elif cg_id:
                 try:
                     raw_cg = fetch_cg_detail_raw(cg_id, market_data=True, community_data=True)
                 except requests.RequestException as exc:
@@ -339,7 +370,10 @@ def run(limit: int | None = None, cmc_id: str | None = None) -> None:
         db.commit()
         for pcid in pending_contrast_ids:
             build_field_contrast.run(cmc_id=pcid)
-        log.info("Done: cmc_field_details/cg_field_details/coin_field_contrast/gap_details updated for %d coins", len(targets))
+        if cmc_only:
+            log.info("Done: cmc_field_details/coin_field_contrast/gap_details updated for %d coins (CoinGecko side untouched)", len(targets))
+        else:
+            log.info("Done: cmc_field_details/cg_field_details/coin_field_contrast/gap_details updated for %d coins", len(targets))
     finally:
         db.close()
 
@@ -348,5 +382,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--limit", type=int, default=None, help="Only pull the first N coins (for testing).")
     parser.add_argument("--cmc-id", type=str, default=None, help="Only pull this one CMC id (for testing).")
+    parser.add_argument("--cmc-only", action="store_true", help="Skip the CoinGecko fetch entirely (CMC side only); contrast/gaps still refresh against existing CoinGecko data.")
     args = parser.parse_args()
-    run(args.limit, args.cmc_id)
+    run(args.limit, args.cmc_id, args.cmc_only)

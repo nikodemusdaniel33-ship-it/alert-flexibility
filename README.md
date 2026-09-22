@@ -315,6 +315,39 @@ timestamp per tab.
   `app.market_data.views.fetch_coins_with_gaps` (kept off `app.db.Base`'s
   metadata on purpose, so `ensure_schema()`'s `create_all()` never tries
   to `CREATE TABLE` something that already exists as a view).
+- `python -m scripts.create_dashboard_views` — creates 6 more VIEWs, same
+  "no rebuild step, always live" reasoning as `coins_with_gaps` above,
+  kept as a separate script since they were requested/delivered as their
+  own batch. Each has a matching `app.market_data.views.fetch_*` helper:
+  - `unmapped_coins` — `cmc_universe` coins with no valid CoinGecko
+    mapping at all (no comparison possible yet) — upstream of
+    `coins_with_gaps`, which only covers coins that already have a
+    mapping and comparison data.
+  - `missing_detail_pulls` — `cmc_universe` coins `full_detail_pull`
+    hasn't actually populated: missing from `cmc_field_details`
+    entirely (`missing_cmc_detail`), or, for a validly-mapped coin,
+    missing from `cg_field_details` (`missing_cg_detail`).
+  - `needs_reconfirm_mappings` — `cmc_cg_mapping` rows still flagged
+    `needs_reconfirm` — the human-review backlog for heuristic
+    (market-cap/social-link) matches, as opposed to confident
+    (contract-address/unique-symbol) ones.
+  - `gap_summary_by_field_type` — aggregate gap rows and distinct coins
+    affected, grouped by `field_type` — a dashboard stat-tile source
+    (e.g. "89 social · 34 contract · 12 tags"), not per-coin.
+  - `universe_overview` — single-row snapshot: total tracked coins,
+    count per source (`in_top600_count`/`on_binance_count`/
+    `on_aster_count`), how many are in all three (`all_three_count`),
+    how many are CoinGecko-mapped (`mapped_count`).
+  - `common_missing_chains` — `gap_details`' `contract`-type rows
+    grouped by chain (`missing_item`), counting how many coins are
+    missing a contract on it — a cross-coin pattern (does CMC
+    systematically lag on one chain) rather than a per-coin status.
+
+  Deliberately left out: a "resolved gaps" / gap-trend view (has a
+  coin's gap count gone down since last time) — not achievable as a
+  plain view, since `coin_field_contrast`/`gap_details` are
+  replace-based snapshots with no history kept. Would need an actual
+  history table, a separate decision.
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
 → `pull_aster_listed` → `full_detail_pull`. Neither `build_cmc_universe`

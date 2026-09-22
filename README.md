@@ -297,6 +297,24 @@ timestamp per tab.
   name-similarity match against. `explorer` gaps aren't broken out here
   — URL values aren't reliably comparable across sources the way a
   contract address is.
+- `python -m scripts.create_coins_with_gaps_view` — creates (or replaces)
+  `coins_with_gaps`, a Postgres **VIEW** (not a table) over
+  `coin_field_contrast`, joined to `cmc_universe` for name/symbol/rank/
+  `cmc_url`/source flags: one row per coin with at least one `gap=true`
+  row, plus a gap count per `field_type` (`social_gap_count`,
+  `market_data_gap_count`, `contract_gap_count`, `explorer_gap_count`,
+  `tags_gap_count`) and a total `gap_count`. Backs the "coins with at
+  least one gap" dashboard list. Unlike everything else in this
+  pipeline, a plain (non-materialized) view has **no rebuild step of its
+  own** — it's a stored query, not a cached snapshot, so every read
+  re-executes the underlying `SELECT` against whatever is currently in
+  `coin_field_contrast`/`cmc_universe` at that moment. Run this script
+  once (or again only if the view's own definition changes) — it's
+  deliberately not part of the pipeline chain, since there's no stored
+  state here that could go stale. Read from Python via
+  `app.market_data.views.fetch_coins_with_gaps` (kept off `app.db.Base`'s
+  metadata on purpose, so `ensure_schema()`'s `create_all()` never tries
+  to `CREATE TABLE` something that already exists as a view).
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
 → `pull_aster_listed` → `full_detail_pull`. Neither `build_cmc_universe`

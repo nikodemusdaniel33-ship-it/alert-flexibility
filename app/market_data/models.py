@@ -1,10 +1,12 @@
 """Reference-data tables for the market-universe pipeline: which coins
-exist (top-600 / Binance-listed / Aster-listed), how CMC ids map to
-CoinGecko ids, and the full detail pulled for each. Standalone from
-`projects`/`gaps` for now -- populated by scripts/pull_top600.py,
-scripts/pull_binance_listed.py, scripts/pull_aster_listed.py,
-scripts/build_cmc_universe.py, scripts/import_cmc_cg_mapping.py and
-scripts/full_detail_pull.py, not yet wired into the live alerting worker.
+exist (top-600 / Binance-listed / Aster-listed / Bybit-listed /
+OKX-listed), how CMC ids map to CoinGecko ids, and the full detail pulled
+for each. Standalone from `projects`/`gaps` for now -- populated by
+scripts/pull_top600.py, scripts/pull_binance_listed.py,
+scripts/pull_aster_listed.py, scripts/pull_bybit_listed.py,
+scripts/pull_okx_listed.py, scripts/build_cmc_universe.py,
+scripts/import_cmc_cg_mapping.py and scripts/full_detail_pull.py, not yet
+wired into the live alerting worker.
 """
 
 from datetime import datetime, timezone
@@ -128,23 +130,75 @@ class CmcAsterListed(Base):
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 
+class CmcBybitListed(Base):
+    """CMC-listed coins currently tradeable on Bybit -- same shape and
+    semantics as CmcBinanceListed/CmcAsterListed: spot/perpetual/futures
+    market pairs, unioned and deduplicated by cmc_id, is_spot/is_perpetual/
+    is_futures flagging which category(ies) a coin was found under.
+    Replace semantics (single current snapshot, no batch history).
+    scripts/pull_bybit_listed.py populates it; not part of
+    MarketUniverseProvider's live auto-tracking -- purely a fourth source
+    feeding cmc_universe."""
+
+    __tablename__ = "cmc_bybit_listed"
+    __table_args__ = (Index("ix_cmc_bybit_listed_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    slug: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_spot: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_perpetual: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_futures: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
+class CmcOkxListed(Base):
+    """CMC-listed coins currently tradeable on OKX -- same shape and
+    semantics as CmcBinanceListed/CmcAsterListed/CmcBybitListed:
+    spot/perpetual/futures market pairs, unioned and deduplicated by
+    cmc_id, is_spot/is_perpetual/is_futures flagging which category(ies)
+    a coin was found under. Replace semantics (single current snapshot,
+    no batch history). scripts/pull_okx_listed.py populates it; not part
+    of MarketUniverseProvider's live auto-tracking -- purely a fifth
+    source feeding cmc_universe."""
+
+    __tablename__ = "cmc_okx_listed"
+    __table_args__ = (Index("ix_cmc_okx_listed_fetched_at_cmc_id", "fetched_at", "cmc_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cmc_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    slug: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    cmc_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_spot: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_perpetual: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    is_futures: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
+
+
 class CmcUniverse(Base):
     """The single "why is this coin tracked" table (scripts/build_cmc_universe.py):
-    one row per CMC id currently tracked by any of three sources, with a
+    one row per CMC id currently tracked by any of five sources, with a
     flag per source. Built by reading cmc_top600's, cmc_binance_listed's,
-    and cmc_aster_listed's current snapshots and unioning them -- no CMC
-    API calls of its own, no change to any source table or /market-data
-    (which keeps reading cmc_top600/cmc_binance_listed directly).
-    in_top600 / on_binance / on_aster flag which source(s) found this id;
-    on_binance and on_aster are each true if the id is in that source
-    under ANY of spot/perpetual/futures -- deliberately not broken out
-    per-category here the way each source's own is_spot/is_perpetual/
-    is_futures are. cmc_rank, name/symbol, and slug (used to derive
-    cmc_url below) are taken in precedence order cmc_top600 >
-    cmc_binance_listed > cmc_aster_listed (top600 canonical, then
-    whichever of the other two has the id). cmc_url is CMC's own catalog
-    page for the coin (app.criteria.market_universe.cmc_currency_url on
-    that slug) -- derived here rather than fetched, so this table keeps
+    cmc_aster_listed's, cmc_bybit_listed's, and cmc_okx_listed's current
+    snapshots and unioning them -- no CMC API calls of its own, no change
+    to any source table or /market-data (which keeps reading
+    cmc_top600/cmc_binance_listed directly).
+    in_top600 / on_binance / on_aster / on_bybit / on_okx flag which
+    source(s) found this id; on_binance/on_aster/on_bybit/on_okx are each
+    true if the id is in that source under ANY of spot/perpetual/futures
+    -- deliberately not broken out per-category here the way each
+    source's own is_spot/is_perpetual/is_futures are. cmc_rank,
+    name/symbol, and slug (used to derive cmc_url below) are taken in
+    precedence order cmc_top600 > cmc_binance_listed > cmc_aster_listed >
+    cmc_bybit_listed > cmc_okx_listed (top600 canonical, then whichever
+    of the other four has the id). cmc_url is CMC's own catalog page for
+    the coin (app.criteria.market_universe.cmc_currency_url on that
+    slug) -- derived here rather than fetched, so this table keeps
     making zero CMC API calls of its own.
 
     Replace semantics, same as CoinFieldContrast/GapDetail/
@@ -177,6 +231,8 @@ class CmcUniverse(Base):
     in_top600: Mapped[bool] = mapped_column(Boolean, default=False)
     on_binance: Mapped[bool] = mapped_column(Boolean, default=False)
     on_aster: Mapped[bool] = mapped_column(Boolean, default=False)
+    on_bybit: Mapped[bool] = mapped_column(Boolean, default=False)
+    on_okx: Mapped[bool] = mapped_column(Boolean, default=False)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, index=True)
 
 

@@ -383,6 +383,29 @@ def fetch_cmc_aster_listed_ids() -> dict[int, dict]:
     return _fetch_cmc_exchange_listed_ids(ASTER_SLUG)
 
 
+BYBIT_SLUG = "bybit"
+OKX_SLUG = "okx"
+
+
+def fetch_cmc_bybit_listed_ids() -> dict[int, dict]:
+    """Same shape as fetch_cmc_binance_listed_ids, for Bybit (CMC exchange
+    slug "bybit", a plain slug -- no aster-pro-style surprise, verified
+    live against CMC's exchange-scoped market-pairs endpoint: 536 spot,
+    733 perpetual, 46 futures as of 2026-09-22). Used by
+    scripts/pull_bybit_listed.py for the reference pipeline; not used
+    anywhere in live auto-tracking."""
+    return _fetch_cmc_exchange_listed_ids(BYBIT_SLUG)
+
+
+def fetch_cmc_okx_listed_ids() -> dict[int, dict]:
+    """Same shape as fetch_cmc_binance_listed_ids, for OKX (CMC exchange
+    slug "okx", verified live against CMC's exchange-scoped market-pairs
+    endpoint: 1366 spot, 467 perpetual, 192 futures as of 2026-09-22).
+    Used by scripts/pull_okx_listed.py for the reference pipeline; not
+    used anywhere in live auto-tracking."""
+    return _fetch_cmc_exchange_listed_ids(OKX_SLUG)
+
+
 def _coingecko_headers() -> dict[str, str]:
     headers = {"Accept": "application/json"}
     if settings.coingecko_api_key:

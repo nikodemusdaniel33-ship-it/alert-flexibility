@@ -23,6 +23,8 @@ coins_with_gaps = Table(
     Column("in_top600", Boolean),
     Column("on_binance", Boolean),
     Column("on_aster", Boolean),
+    Column("on_bybit", Boolean),
+    Column("on_okx", Boolean),
     Column("gap_count", Integer),
     Column("social_gap_count", Integer),
     Column("market_data_gap_count", Integer),
@@ -42,6 +44,8 @@ unmapped_coins = Table(
     Column("in_top600", Boolean),
     Column("on_binance", Boolean),
     Column("on_aster", Boolean),
+    Column("on_bybit", Boolean),
+    Column("on_okx", Boolean),
 )
 
 missing_detail_pulls = Table(
@@ -84,7 +88,9 @@ universe_overview = Table(
     Column("in_top600_count", Integer),
     Column("on_binance_count", Integer),
     Column("on_aster_count", Integer),
-    Column("all_three_count", Integer),
+    Column("on_bybit_count", Integer),
+    Column("on_okx_count", Integer),
+    Column("all_five_count", Integer),
     Column("mapped_count", Integer),
 )
 
@@ -134,7 +140,7 @@ def fetch_gap_summary_by_field_type(db):
 
 def fetch_universe_overview(db):
     """Single-row snapshot: total tracked coins, count per source, how
-    many are in all three, how many are CoinGecko-mapped."""
+    many are in all five, how many are CoinGecko-mapped."""
     return db.execute(select(universe_overview)).first()
 
 

@@ -42,6 +42,8 @@ SELECT
     cu.in_top600,
     cu.on_binance,
     cu.on_aster,
+    cu.on_bybit,
+    cu.on_okx,
     COUNT(*) FILTER (WHERE cfc.gap) AS gap_count,
     COUNT(*) FILTER (WHERE cfc.gap AND cfc.field_type = 'social') AS social_gap_count,
     COUNT(*) FILTER (WHERE cfc.gap AND cfc.field_type = 'market_data') AS market_data_gap_count,
@@ -51,7 +53,7 @@ SELECT
     MAX(cfc.contrasted_at) AS last_contrasted_at
 FROM coin_field_contrast cfc
 LEFT JOIN cmc_universe cu ON cu.cmc_id = cfc.cmc_id
-GROUP BY cfc.cmc_id, cfc.cg_id, cu.name, cu.symbol, cu.cmc_rank, cu.cmc_url, cu.in_top600, cu.on_binance, cu.on_aster
+GROUP BY cfc.cmc_id, cfc.cg_id, cu.name, cu.symbol, cu.cmc_rank, cu.cmc_url, cu.in_top600, cu.on_binance, cu.on_aster, cu.on_bybit, cu.on_okx
 HAVING COUNT(*) FILTER (WHERE cfc.gap) > 0
 """
 

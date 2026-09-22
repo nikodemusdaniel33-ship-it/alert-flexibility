@@ -150,9 +150,9 @@ A separate set of tables and scripts for building a reviewed, stable
 CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 
 - `app/market_data/models.py` — `cmc_cg_mapping`, `cmc_top600`,
-  `cmc_binance_listed`, `cmc_aster_listed`, `cmc_universe`,
-  `cmc_field_details`, `cg_field_details`, `coin_field_contrast`,
-  `gap_details`, `detail_pull_failures`.
+  `cmc_binance_listed`, `cmc_aster_listed`, `cmc_bybit_listed`,
+  `cmc_okx_listed`, `cmc_universe`, `cmc_field_details`, `cg_field_details`,
+  `coin_field_contrast`, `gap_details`, `detail_pull_failures`.
 - `data/cmc_cg_mapping.csv` (+ `data/cmc_cg_unmatched.csv`) — a
   human-reviewed CMC↔CoinGecko mapping export. Its `valid` column marks
   confidently-matched rows (contract address or a unique symbol) versus
@@ -182,22 +182,32 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
 - `python -m scripts.pull_aster_listed` — same as `pull_binance_listed`,
   against the Aster DEX instead (CMC exchange slug `aster-pro`). Not used
   by any live auto-tracking, purely a third source feeding `cmc_universe`.
+- `python -m scripts.pull_bybit_listed` — same as `pull_binance_listed`,
+  against Bybit instead (CMC exchange slug `bybit`, a plain slug — no
+  `aster-pro`-style surprise, verified live against CMC's exchange-scoped
+  market-pairs endpoint). Not used by any live auto-tracking, purely a
+  fourth source feeding `cmc_universe`.
+- `python -m scripts.pull_okx_listed` — same as `pull_binance_listed`,
+  against OKX instead (CMC exchange slug `okx`). Not used by any live
+  auto-tracking, purely a fifth source feeding `cmc_universe`.
 - `python -m scripts.build_cmc_universe` — unions `cmc_top600`'s,
-  `cmc_binance_listed`'s, and `cmc_aster_listed`'s current snapshots into
-  `cmc_universe`: one row per CMC id tracked by any of the three, with
-  `in_top600`/`on_binance`/`on_aster` flags saying why (`on_binance`/
-  `on_aster` are true under any of spot/perpetual/futures — see each
-  source table's own `is_spot`/`is_perpetual`/`is_futures` for the
+  `cmc_binance_listed`'s, `cmc_aster_listed`'s, `cmc_bybit_listed`'s, and
+  `cmc_okx_listed`'s current snapshots into `cmc_universe`: one row per
+  CMC id tracked by any of the five, with `in_top600`/`on_binance`/
+  `on_aster`/`on_bybit`/`on_okx` flags saying why (`on_binance`/`on_aster`/
+  `on_bybit`/`on_okx` are true under any of spot/perpetual/futures — see
+  each source table's own `is_spot`/`is_perpetual`/`is_futures` for the
   per-category breakdown), plus `cmc_url` (CMC's own catalog page for the
   coin, derived from whichever source's `slug` is available — not
   fetched; precedence `cmc_top600` > `cmc_binance_listed` >
-  `cmc_aster_listed` for name/symbol/rank/slug when a coin is in more
-  than one). Reads those three tables only, no CMC API calls of its own.
+  `cmc_aster_listed` > `cmc_bybit_listed` > `cmc_okx_listed` for
+  name/symbol/rank/slug when a coin is in more than one). Reads those
+  five tables only, no CMC API calls of its own.
   **Replace semantics**, same as `cmc_field_details`/`cg_field_details`/
   `coin_field_contrast`/`gap_details`: every run recomputes the full
   universe and replaces the table's contents, so it always holds a
   single current snapshot (no batching, no history) — `fetched_at` is
-  just "when this snapshot was last built". A coin absent from all three
+  just "when this snapshot was last built". A coin absent from all five
   sources simply has no row afterward (not a row with every flag false —
   a coin nothing currently tracks has no reason for a row to exist; the
   alternative would make `full_detail_pull` keep spending CMC/CoinGecko
@@ -210,27 +220,27 @@ CMC-to-CoinGecko universe — independent of `projects`/`gaps` for now:
   place to answer "is this CMC id currently tracked, and why."
 
   **Called automatically**, not just via the daily chain: `pull_top600`,
-  `pull_binance_listed`, and `pull_aster_listed` each call
-  `build_cmc_universe.run()` directly (plain Python function call) at the
-  end of their own `run()`, so `cmc_universe` stays current even if one
-  of those three is ever run standalone — not just when the daily chain
-  completes. Safe to call redundantly (idempotent full recompute,
-  sub-second, no API calls) — a normal daily run ends up calling it up to
-  four times (once per pull script, plus once explicitly at the end of
-  the chain below) and that's fine. A plain Postgres trigger (reacting to
-  `INSERT`s on the three source tables) was considered instead but
-  rejected: it would need the same union logic reimplemented in
-  PL/pgSQL, a second copy that could silently drift from this one —
-  calling the existing Python function directly keeps a single
-  implementation and zero sync risk.
+  `pull_binance_listed`, `pull_aster_listed`, `pull_bybit_listed`, and
+  `pull_okx_listed` each call `build_cmc_universe.run()` directly (plain
+  Python function call) at the end of their own `run()`, so
+  `cmc_universe` stays current even if one of those five is ever run
+  standalone — not just when the daily chain completes. Safe to call
+  redundantly (idempotent full recompute, sub-second, no API calls) — a
+  normal daily run ends up calling it up to six times (once per pull
+  script, plus once explicitly at the end of the chain below) and that's
+  fine. A plain Postgres trigger (reacting to `INSERT`s on the five
+  source tables) was considered instead but rejected: it would need the
+  same union logic reimplemented in PL/pgSQL, a second copy that could
+  silently drift from this one — calling the existing Python function
+  directly keeps a single implementation and zero sync risk.
 
-`pull_top600`, `pull_binance_listed`, and `pull_aster_listed` all run
-daily via a dedicated Railway cron service (`market-data-cron`,
-`cronSchedule: 0 2 * * *`, `restartPolicyType: NEVER`) rather than
-continuously — Railway only starts its container at the scheduled tick,
-not on deploy. The `/market-data` dashboard page shows the current
-`cmc_top600`/`cmc_binance_listed` snapshot, with a "last fetched"
-timestamp per tab.
+`pull_top600`, `pull_binance_listed`, `pull_aster_listed`,
+`pull_bybit_listed`, and `pull_okx_listed` all run daily via a dedicated
+Railway cron service (`market-data-cron`, `cronSchedule: 0 2 * * *`,
+`restartPolicyType: NEVER`) rather than continuously — Railway only
+starts its container at the scheduled tick, not on deploy. The
+`/market-data` dashboard page shows the current `cmc_top600`/
+`cmc_binance_listed` snapshot, with a "last fetched" timestamp per tab.
 - `python -m scripts.full_detail_pull [--limit N] [--cmc-id ID]` — pulls
   CMC detail for **every** coin in `cmc_universe`'s current snapshot (no
   CoinGecko id needed for that side) into `cmc_field_details`, and
@@ -336,8 +346,9 @@ timestamp per tab.
     (e.g. "89 social · 34 contract · 12 tags"), not per-coin.
   - `universe_overview` — single-row snapshot: total tracked coins,
     count per source (`in_top600_count`/`on_binance_count`/
-    `on_aster_count`), how many are in all three (`all_three_count`),
-    how many are CoinGecko-mapped (`mapped_count`).
+    `on_aster_count`/`on_bybit_count`/`on_okx_count`), how many are in
+    all five (`all_five_count`), how many are CoinGecko-mapped
+    (`mapped_count`).
   - `common_missing_chains` — `gap_details`' `contract`-type rows
     grouped by chain (`missing_item`), counting how many coins are
     missing a contract on it — a cross-coin pattern (does CMC
@@ -350,14 +361,14 @@ timestamp per tab.
   history table, a separate decision.
 
 Run order: `import_cmc_cg_mapping` → `pull_top600` → `pull_binance_listed`
-→ `pull_aster_listed` → `full_detail_pull`. Neither `build_cmc_universe`
-nor `build_field_contrast` needs a separate step anymore — each of the
-three pull scripts calls `build_cmc_universe` automatically at the end of
-its own run, and `full_detail_pull` calls `build_field_contrast`
-automatically per coin as it goes, so `cmc_universe` is already current
-by the time `full_detail_pull` runs, and `coin_field_contrast`/
-`gap_details` are already current by the time `full_detail_pull`
-finishes.
+→ `pull_aster_listed` → `pull_bybit_listed` → `pull_okx_listed` →
+`full_detail_pull`. Neither `build_cmc_universe` nor `build_field_contrast`
+needs a separate step anymore — each of the five pull scripts calls
+`build_cmc_universe` automatically at the end of its own run, and
+`full_detail_pull` calls `build_field_contrast` automatically per coin as
+it goes, so `cmc_universe` is already current by the time
+`full_detail_pull` runs, and `coin_field_contrast`/`gap_details` are
+already current by the time `full_detail_pull` finishes.
 
 ## Other standalone scripts
 
@@ -411,12 +422,23 @@ or a custom domain). Without this, Telegram will refuse to complete login.
 
 ## Deploying on Railway
 
-Two services from this repo, sharing one Postgres:
+Three services from this repo, sharing one Postgres:
 
 - **web** — start command `python -m scripts.seed_projects && uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - **worker** — start command `python -m app.worker`, run on a cron schedule
   (e.g. every 6 hours) via Railway's cron trigger on the service.
+- **market-data-cron** — the market-data reference pipeline's daily chain
+  (see "Market-data reference pipeline" above), `cronSchedule: 0 2 * * *`,
+  `restartPolicyType: NEVER`. Start command chains the five pull scripts
+  and a final explicit `build_cmc_universe` call:
+  `python -m scripts.pull_top600 && python -m scripts.pull_binance_listed && python -m scripts.pull_aster_listed && python -m scripts.pull_bybit_listed && python -m scripts.pull_okx_listed && python -m scripts.build_cmc_universe`.
+  A one-off script run on this service (e.g. `full_detail_pull`, a view
+  rebuild, or a schema migration) is done by temporarily nulling
+  `cronSchedule`, setting `startCommand` to the one-off command,
+  reconnecting the service's source to trigger a fresh deploy, and
+  restoring both settings once it completes — see `ENGINEERING.md` for
+  the exact procedure.
 
-Set the environment variables above on both services (or as shared
+Set the environment variables above on all three services (or as shared
 variables), pointing `DATABASE_URL` at the Postgres plugin's connection
 string.

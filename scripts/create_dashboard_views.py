@@ -19,7 +19,7 @@ after this except if a view's own definition changes.
   affected, grouped by field_type -- a dashboard stat-tile source, not
   per-coin.
 - `universe_overview` -- single-row snapshot: total tracked coins, count
-  per source, how many are in all three, how many are CoinGecko-mapped.
+  per source, how many are in all five, how many are CoinGecko-mapped.
 - `common_missing_chains` -- gap_details' contract-type rows grouped by
   chain, counting how many coins are missing a contract on it -- a
   cross-coin pattern (does CMC systematically lag on one chain), not a
@@ -41,7 +41,7 @@ log = logging.getLogger("create_dashboard_views")
 
 VIEWS = {
     "unmapped_coins": """
-        SELECT cu.cmc_id, cu.name, cu.symbol, cu.cmc_rank, cu.in_top600, cu.on_binance, cu.on_aster
+        SELECT cu.cmc_id, cu.name, cu.symbol, cu.cmc_rank, cu.in_top600, cu.on_binance, cu.on_aster, cu.on_bybit, cu.on_okx
         FROM cmc_universe cu
         LEFT JOIN cmc_cg_mapping m ON m.cmc_id = cu.cmc_id AND m.valid = TRUE AND m.cg_id IS NOT NULL
         WHERE m.cmc_id IS NULL
@@ -78,7 +78,9 @@ VIEWS = {
             COUNT(*) FILTER (WHERE cu.in_top600) AS in_top600_count,
             COUNT(*) FILTER (WHERE cu.on_binance) AS on_binance_count,
             COUNT(*) FILTER (WHERE cu.on_aster) AS on_aster_count,
-            COUNT(*) FILTER (WHERE cu.in_top600 AND cu.on_binance AND cu.on_aster) AS all_three_count,
+            COUNT(*) FILTER (WHERE cu.on_bybit) AS on_bybit_count,
+            COUNT(*) FILTER (WHERE cu.on_okx) AS on_okx_count,
+            COUNT(*) FILTER (WHERE cu.in_top600 AND cu.on_binance AND cu.on_aster AND cu.on_bybit AND cu.on_okx) AS all_five_count,
             COUNT(*) FILTER (WHERE m.cmc_id IS NOT NULL) AS mapped_count
         FROM cmc_universe cu
         LEFT JOIN cmc_cg_mapping m ON m.cmc_id = cu.cmc_id AND m.valid = TRUE AND m.cg_id IS NOT NULL

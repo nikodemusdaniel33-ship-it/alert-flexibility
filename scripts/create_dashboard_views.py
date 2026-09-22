@@ -75,12 +75,13 @@ VIEWS = {
     "universe_overview": """
         SELECT
             COUNT(*) AS total_coins,
-            COUNT(*) FILTER (WHERE in_top600) AS in_top600_count,
-            COUNT(*) FILTER (WHERE on_binance) AS on_binance_count,
-            COUNT(*) FILTER (WHERE on_aster) AS on_aster_count,
-            COUNT(*) FILTER (WHERE in_top600 AND on_binance AND on_aster) AS all_three_count,
-            (SELECT COUNT(*) FROM cmc_cg_mapping WHERE valid = TRUE AND cg_id IS NOT NULL) AS mapped_count
-        FROM cmc_universe
+            COUNT(*) FILTER (WHERE cu.in_top600) AS in_top600_count,
+            COUNT(*) FILTER (WHERE cu.on_binance) AS on_binance_count,
+            COUNT(*) FILTER (WHERE cu.on_aster) AS on_aster_count,
+            COUNT(*) FILTER (WHERE cu.in_top600 AND cu.on_binance AND cu.on_aster) AS all_three_count,
+            COUNT(*) FILTER (WHERE m.cmc_id IS NOT NULL) AS mapped_count
+        FROM cmc_universe cu
+        LEFT JOIN cmc_cg_mapping m ON m.cmc_id = cu.cmc_id AND m.valid = TRUE AND m.cg_id IS NOT NULL
     """,
     "common_missing_chains": """
         SELECT missing_item AS chain, COUNT(*) AS coin_count
